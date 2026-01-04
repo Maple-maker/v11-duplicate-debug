@@ -1,10 +1,10 @@
-"""DD1750 core - Auto-detect positions from template."""
+"""DD1750 core - Simple and working."""
 
 import io
 import math
 import re
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
@@ -35,66 +35,6 @@ class BomItem:
     qty: int
 
 
-def detect_admin_positions(template_path: str) -> Dict:
-    """Auto-detect admin field positions from template."""
-    positions = {}
-    
-    try:
-        with pdfplumber.open(template_path) as pdf:
-            page = pdf.pages[0]
-            words = page.extract_words()
-            
-            for word in words:
-                text = word['text'].upper()
-                x0, x1 = word['x0'], word['x1']
-                y = word['top']
-                
-                # Find labels and store position AFTER them
-                if 'REQUISITION' in text and 'NO' not in text:
-                    positions['requisition'] = {'x': x1 + 5, 'y': y}
-                elif 'ORDER' in text and 'NO' in text:
-                    positions['order'] = {'x': x1 + 5, 'y': y}
-                elif text == 'DATE':
-                    positions['date'] = {'x': x1 + 5, 'y': y}
-                elif 'BOXES' in text:
-                    positions['boxes'] = {'x': x1 + 5, 'y': y}
-                elif 'UNIT' in text:
-                    positions['unit'] = {'x': x1 + 5, 'y': y}
-                elif 'PAGE' in text:
-                    positions['page'] = {'x': x1 + 5, 'y': y}
-                elif 'PACKED' in text and 'BY' in text:
-                    positions['packed'] = {'x': x0, 'y': y}
-                elif 'RECEIVED' in text and 'BY' in text:
-                    positions['received'] = {'x': x0, 'y': y}
-                elif 'END' in text and 'ITEM' in text:
-                    positions['end_item'] = {'x': x1 + 5, 'y': y}
-                elif 'MODEL' in text:
-                    positions['model'] = {'x': x1 + 5, 'y': y}
-    
-    except Exception as e:
-        print(f"Error detecting positions: {e}")
-    
-    print(f"Detected positions: {positions}")
-    return positions
-
-
-def format_military_date(date_str: str) -> str:
-    """Convert date to DDMONYYYY format."""
-    if not date_str:
-        return ""
-    
-    try:
-        for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y']:
-            try:
-                dt = datetime.strptime(date_str, fmt)
-                return dt.strftime('%d%b%Y').upper()
-            except:
-                continue
-        return date_str
-    except:
-        return date_str
-
-
 def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     items = []
     
@@ -108,7 +48,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         continue
                     
                     header = table[0]
-                    lv_idx = desc_idx = mat_idx = qty_idx = None
+                    lv_idx = desc_idx = mat_idx = auth_idx = None
                     
                     for i, cell in enumerate(header):
                         if cell:
@@ -120,7 +60,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                             elif 'MATERIAL' in text:
                                 mat_idx = i
                             elif 'AUTH' in text and 'QTY' in text:
-                                qty_idx = i
+                                auth_idx = i
                     
                     if lv_idx is None or desc_idx is None:
                         continue
@@ -133,7 +73,6 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         if not lv_cell or str(lv_cell).strip().upper() != 'B':
                             continue
                         
-                        # Description
                         desc_cell = row[desc_idx] if desc_idx < len(row) else None
                         description = ""
                         if desc_cell:
@@ -145,7 +84,6 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         if not description:
                             continue
                         
-                        # NSN
                         nsn = ""
                         if mat_idx is not None and mat_idx < len(row):
                             mat_cell = row[mat_idx]
@@ -154,10 +92,9 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 if match:
                                     nsn = match.group(1)
                         
-                        # QTY from AUTH QTY column
                         qty = 1
-                        if qty_idx is not None and qty_idx < len(row):
-                            qty_cell = row[qty_idx]
+                        if auth_idx is not None and auth_idx < len(row):
+                            qty_cell = row[auth_idx]
                             if qty_cell:
                                 qty_text = str(qty_cell).strip()
                                 match = re.search(r'(\d+)', qty_text)
@@ -172,20 +109,12 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     return items
 
 
-def generate_dd1750_from_pdf(bom_path: str, template_path: str, output_path: str,
-                            start_page: int = 0, admin_data: Dict = None) -> tuple:
+def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0, admin_data=None):
     if admin_data is None:
         admin_data = {}
     
-    # Format date
-    if admin_data.get('date'):
-        admin_data['date'] = format_military_date(admin_data['date'])
-    
-    # Detect positions from template
-    positions = detect_admin_positions(template_path)
-    
     items = extract_items_from_pdf(bom_path, start_page)
-    print(f"Items: {len(items)}, Positions: {positions}")
+    print(f"Items: {len(items)}")
     
     if not items:
         try:
@@ -210,7 +139,6 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, output_path: str
         c = canvas.Canvas(packet, pagesize=letter)
         first_row = Y_TABLE_TOP - 5.0
         
-        # Draw items
         for i, item in enumerate(page_items):
             y = first_row - (i * ROW_H)
             
@@ -229,47 +157,6 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, output_path: str
             c.drawCentredString(431, y - 7, str(item.qty))
             c.drawCentredString(484, y - 7, "0")
             c.drawCentredString(540, y - 7, str(item.qty))
-        
-        # Draw admin using detected positions
-        c.setFont("Helvetica", 10)
-        
-        if positions.get('unit') and admin_data.get('unit'):
-            c.drawString(positions['unit']['x'], positions['unit']['y'], admin_data['unit'][:30])
-        
-        if positions.get('requisition') and admin_data.get('requisition_no'):
-            c.drawString(positions['requisition']['x'], positions['requisition']['y'], admin_data['requisition_no'])
-        
-        if positions.get('date') and admin_data.get('date'):
-            c.drawString(positions['date']['x'], positions['date']['y'], admin_data['date'])
-        
-        if positions.get('order') and admin_data.get('order_no'):
-            c.drawString(positions['order']['x'], positions['order']['y'], admin_data['order_no'])
-        
-        if positions.get('boxes') and admin_data.get('num_boxes'):
-            c.drawString(positions['boxes']['x'], positions['boxes']['y'], admin_data['num_boxes'])
-        
-        if positions.get('end_item') and admin_data.get('end_item'):
-            c.drawString(positions['end_item']['x'], positions['end_item']['y'], admin_data['end_item'])
-        
-        if positions.get('model') and admin_data.get('model'):
-            c.drawString(positions['model']['x'], positions['model']['y'], admin_data['model'])
-        
-        if positions.get('page') and total_pages > 1:
-            c.setFont("Helvetica", 8)
-            c.drawString(positions['page']['x'], positions['page']['y'], f"{page_num + 1}/{total_pages}")
-        
-        # Bottom section
-        if positions.get('packed') and admin_data.get('packed_by'):
-            c.setFont("Helvetica", 10)
-            c.drawString(positions['packed']['x'], positions['packed']['y'], admin_data['packed_by'])
-            c.setFont("Helvetica", 8)
-            c.drawString(positions['packed']['x'], positions['packed']['y'] - 10, "(Signature)")
-        
-        if positions.get('received'):
-            c.setFont("Helvetica", 10)
-            c.drawString(positions['received']['x'], positions['received']['y'], "RECEIVED BY:")
-            c.setFont("Helvetica", 8)
-            c.drawString(positions['received']['x'], positions['received']['y'] - 10, "(Signature)")
         
         c.save()
         packet.seek(0)
