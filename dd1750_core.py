@@ -62,7 +62,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 desc_idx = i
                             elif 'MATERIAL' in text:
                                 mat_idx = i
-                            elif 'QTY' in text or 'AUTH' in text:
+                            elif 'AUTH' in text and 'QTY' in text:
                                 qty_idx = i
                     
                     if lv_idx is None or desc_idx is None:
@@ -99,14 +99,19 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 if match:
                                     nsn = match.group(1)
                         
+                        # FIXED: Get quantity from Auth Qty column
                         qty = 1
                         if qty_idx is not None and qty_idx < len(row):
                             qty_cell = row[qty_idx]
                             if qty_cell:
-                                try:
-                                    qty = int(str(qty_cell).strip())
-                                except:
-                                    qty = 1
+                                qty_str = str(qty_cell).strip()
+                                print(f"Qty raw: '{qty_str}'")
+                                match = re.search(r'(\d+)', qty_str)
+                                if match:
+                                    qty = int(match.group(1))
+                                    print(f"Qty extracted: {qty}")
+                                else:
+                                    print(f"No number found in qty")
                         
                         items.append(BomItem(
                             line_no=len(items) + 1,
@@ -117,6 +122,8 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     
     except Exception as e:
         print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return []
     
     return items
