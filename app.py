@@ -44,6 +44,8 @@ def generate():
             'date': request.form.get('date', datetime.now().strftime('%Y-%m-%d')).strip(),
         }
         
+        print(f"DEBUG: Admin data received: {admin_data}")
+        
         with tempfile.TemporaryDirectory() as temp_dir:
             bom_path = os.path.join(temp_dir, 'bom.pdf')
             template_path = os.path.join(temp_dir, 'template.pdf')
@@ -57,13 +59,14 @@ def generate():
             )
             
             if item_count == 0:
-                flash('No items found')
+                flash('No items found in BOM')
                 return redirect('/')
             
             filename = f"DD1750_{admin_data['requisition_no'] or 'filled'}_{item_count}_items.pdf"
             return send_file(output_path, as_attachment=True, download_name=filename)
             
     except Exception as e:
+        print(f"ERROR: {e}")
         flash(f'Error: {str(e)}')
         return redirect('/')
 
