@@ -4,7 +4,6 @@ from flask import Flask, render_template, request, send_file
 from dd1750_core import generate_dd1750_from_pdf
 
 app = Flask(__name__)
-app.secret_key = 'dd1750-key'
 
 @app.route('/')
 def index():
