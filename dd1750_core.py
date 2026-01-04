@@ -1,4 +1,4 @@
-"""DD1750 core - Alternative approach."""
+"""DD1750 core - Items only."""
 
 import io
 import math
@@ -38,129 +38,120 @@ class BomItem:
 def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     items = []
     
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages[start_page:]:
-                tables = page.extract_tables()
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages[start_page:]:
+            tables = page.extract_tables()
+            
+            for table in tables:
+                if len(table) < 2:
+                    continue
                 
-                for table in tables:
-                    if len(table) < 2:
+                header = table[0]
+                lv_idx = desc_idx = mat_idx = auth_idx = None
+                
+                for i, cell in enumerate(header):
+                    if cell:
+                        text = str(cell).upper()
+                        if 'LV' in text or 'LEVEL' in text:
+                            lv_idx = i
+                        elif 'DESC' in text or 'NOMENCLATURE' in text:
+                            desc_idx = i
+                        elif 'MATERIAL' in text:
+                            mat_idx = i
+                        elif 'AUTH' in text and 'QTY' in text:
+                            auth_idx = i
+                
+                if lv_idx is None or desc_idx is None:
+                    continue
+                
+                for row in table[1:]:
+                    if not any(cell for cell in row if cell):
                         continue
                     
-                    header = table[0]
-                    lv_idx = desc_idx = mat_idx = auth_idx = None
-                    
-                    for i, cell in enumerate(header):
-                        if cell:
-                            text = str(cell).upper()
-                            if 'LV' in text or 'LEVEL' in text:
-                                lv_idx = i
-                            elif 'DESC' in text or 'NOMENCLATURE' in text:
-                                desc_idx = i
-                            elif 'MATERIAL' in text:
-                                mat_idx = i
-                            elif 'AUTH' in text and 'QTY' in text:
-                                auth_idx = i
-                    
-                    if lv_idx is None or desc_idx is None:
+                    lv_cell = row[lv_idx] if lv_idx < len(row) else None
+                    if not lv_cell or str(lv_cell).strip().upper() != 'B':
                         continue
                     
-                    for row in table[1:]:
-                        if not any(cell for cell in row if cell):
-                            continue
-                        
-                        lv_cell = row[lv_idx] if lv_idx < len(row) else None
-                        if not lv_cell or str(lv_cell).strip().upper() != 'B':
-                            continue
-                        
-                        desc_cell = row[desc_idx] if desc_idx < len(row) else None
-                        description = ""
-                        if desc_cell:
-                            lines = str(desc_cell).strip().split('\n')
-                            description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
-                            if '(' in description:
-                                description = description.split('(')[0].strip()
-                        
-                        if not description:
-                            continue
-                        
-                        nsn = ""
-                        if mat_idx is not None and mat_idx < len(row):
-                            mat_cell = row[mat_idx]
-                            if mat_cell:
-                                match = re.search(r'\b(\d{9})\b', str(mat_cell))
-                                if match:
-                                    nsn = match.group(1)
-                        
-                        qty = 1
-                        if auth_idx is not None and auth_idx < len(row):
-                            qty_cell = row[auth_idx]
-                            if qty_cell:
-                                qty_text = str(qty_cell).strip()
-                                match = re.search(r'(\d+)', qty_text)
-                                if match:
-                                    qty = int(match.group(1))
-                        
-                        items.append(BomItem(len(items) + 1, description.strip(), nsn, qty))
-    
-    except Exception as e:
-        print(f"ERROR: {e}")
+                    desc_cell = row[desc_idx] if desc_idx < len(row) else None
+                    description = ""
+                    if desc_cell:
+                        lines = str(desc_cell).strip().split('\n')
+                        description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
+                        if '(' in description:
+                            description = description.split('(')[0].strip()
+                    
+                    if not description:
+                        continue
+                    
+                    nsn = ""
+                    if mat_idx is not None and mat_idx < len(row):
+                        mat_cell = row[mat_idx]
+                        if mat_cell:
+                            match = re.search(r'\b(\d{9})\b', str(mat_cell))
+                            if match:
+                                nsn = match.group(1)
+                    
+                    qty = 1
+                    if auth_idx is not None and auth_idx < len(row):
+                        qty_cell = row[auth_idx]
+                        if qty_cell:
+                            qty_text = str(qty_cell).strip()
+                            match = re.search(r'(\d+)', qty_text)
+                            if match:
+                                qty = int(match.group(1))
+                    
+                    items.append(BomItem(len(items) + 1, description.strip(), nsn, qty))
     
     return items
 
 
 def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0):
     items = extract_items_from_pdf(bom_path, start_page)
-    print(f"Items: {len(items)}")
     
     if not items:
         return output_path, 0
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
+    
     writer = PdfWriter()
     
-    for page_num in range(total_pages):
-        start_idx = page_num * ROWS_PER_PAGE
-        end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
-        page_items = items[start_idx:end_idx]
+    with open(template_path, 'rb') as f:
+        template_reader = PdfReader(f)
         
-        # Read template page
-        with open(template_path, 'rb') as f:
-            template_reader = PdfReader(f)
+        for page_num in range(total_pages):
+            start_idx = page_num * ROWS_PER_PAGE
+            end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
+            page_items = items[start_idx:end_idx]
+            
             page = template_reader.pages[page_num]
-        
-        # Create overlay
-        packet = io.BytesIO()
-        c = canvas.Canvas(packet, pagesize=letter)
-        first_row = Y_TABLE_TOP - 5.0
-        
-        for i, item in enumerate(page_items):
-            y = first_row - (i * ROW_H)
             
-            c.setFont("Helvetica", 8)
-            c.drawCentredString(66, y - 7, str(item.line_no))
+            packet = io.BytesIO()
+            c = canvas.Canvas(packet, pagesize=letter)
+            first_row = Y_TABLE_TOP - 5.0
             
-            c.setFont("Helvetica", 7)
-            c.drawString(92, y - 7, item.description[:50])
+            for i, item in enumerate(page_items):
+                y = first_row - (i * ROW_H)
+                
+                c.setFont("Helvetica", 8)
+                c.drawCentredString(66, y - 7, str(item.line_no))
+                c.drawString(92, y - 7, item.description[:50])
+                
+                if item.nsn:
+                    c.setFont("Helvetica", 6)
+                    c.drawString(92, y - 12, f"NSN: {item.nsn}")
+                
+                c.setFont("Helvetica", 8)
+                c.drawCentredString(386, y - 7, "EA")
+                c.drawCentredString(431, y - 7, str(item.qty))
+                c.drawCentredString(484, y - 7, "0")
+                c.drawCentredString(540, y - 7, str(item.qty))
             
-            if item.nsn:
-                c.setFont("Helvetica", 6)
-                c.drawString(92, y - 12, f"NSN: {item.nsn}")
+            c.save()
+            packet.seek(0)
             
-            c.setFont("Helvetica", 8)
-            c.drawCentredString(386, y - 7, "EA")
-            c.drawCentredString(431, y - 7, str(item.qty))
-            c.drawCentredString(484, y - 7, "0")
-            c.drawCentredString(540, y - 7, str(item.qty))
-        
-        c.save()
-        packet.seek(0)
-        
-        # Merge overlay
-        overlay = PdfReader(packet)
-        page.merge_page(overlay.pages[0])
-        
-        writer.add_page(page)
+            overlay = PdfReader(packet)
+            page.merge_page(overlay.pages[0])
+            writer.add_page(page)
     
     with open(output_path, 'wb') as f:
         writer.write(f)
