@@ -116,23 +116,13 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
 
 
 def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, start_page: int = 0):
+    """Generate items ONLY PDF. User places on template manually."""
     try:
         items = extract_items_from_pdf(bom_path, start_page)
         print(f"\nItems found: {len(items)}")
         
         if not items:
             return out_path, 0
-        
-        # Save original form fields
-        template = PdfReader(template_path)
-        original_fields = {}
-        try:
-            if template.get_fields():
-                for name, field in template.get_fields().items():
-                    if isinstance(field, dict) and '/V' in field:
-                        original_fields[name] = field['/V']
-        except:
-            pass
         
         total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
         writer = PdfWriter()
@@ -150,36 +140,4 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, s
                 y = first_row_top - (i * ROW_H)
                 
                 c.setFont("Helvetica", 8)
-                c.drawCentredString(66, y - 7, str(item.line_no))
-                c.drawString(92, y - 7, item.description[:50])
-                
-                if item.nsn:
-                    c.setFont("Helvetica", 6)
-                    c.drawString(92, y - 12, f"NSN: {item.nsn}")
-                
-                c.setFont("Helvetica", 8)
-                c.drawCentredString(386, y - 7, "EA")
-                c.drawCentredString(431, y - 7, str(item.qty))
-                c.drawCentredString(484, y - 7, "0")
-                c.drawCentredString(540, y - 7, str(item.qty))
-            
-            c.save()
-            packet.seek(0)
-            
-            overlay = PdfReader(packet)
-            page = template.pages[0]
-            page.merge_page(overlay.pages[0])
-            writer.add_page(page)
-        
-        # Restore form fields
-        if original_fields:
-            writer.set_fields(original_fields)
-        
-        with open(out_path, 'wb') as f:
-            writer.write(f)
-        
-        return out_path, len(items)
-        
-    except Exception as e:
-        print(f"ERROR: {e}")
-        return out_path, 0
+                c.drawCentredString(66, y - 7,
