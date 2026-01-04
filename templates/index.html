@@ -4,44 +4,25 @@
     <meta charset="UTF-8">
     <title>DD1750 Converter</title>
     <style>
-        body { font-family: Arial; max-width: 700px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
+        body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
         .container { background: white; padding: 30px; border-radius: 10px; }
-        h1 { color: #333; }
-        .note { background: #fff3cd; padding: 15px; border-radius: 5px; margin-bottom: 20px; color: #856404; }
-        .upload { margin-bottom: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="file"] { border: 2px dashed #ccc; padding: 10px; width: 100%; }
-        button { background: #1976d2; color: white; border: none; padding: 15px 30px; border-radius: 5px; font-size: 16px; cursor: pointer; }
+        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>DD1750 Converter</h1>
-        
-        <div class="note">
-            <strong>How to use:</strong><br>
-            1. Upload BOM PDF<br>
-            2. Upload DD1750 template (with fillable admin fields)<br>
-            3. Click Generate<br>
-            4. Fill in admin fields manually in your PDF editor
-        </div>
-        
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}<div style="padding:10px;background:#ffebee;color:#c62828;margin-bottom:15px;border-radius:4px;">{{ messages[0] }}</div>{% endif %}
-        {% endwith %}
-        
         <form method="POST" action="/generate" enctype="multipart/form-data">
             <div class="upload">
                 <label>BOM PDF</label>
                 <input type="file" name="bom_file" accept=".pdf" required>
             </div>
-            
             <div class="upload">
-                <label>DD1750 Template PDF (with fillable fields)</label>
+                <label>DD1750 Template</label>
                 <input type="file" name="template_file" accept=".pdf" required>
             </div>
-            
-            <button type="submit">Generate DD1750</button>
+            <button type="submit">Generate</button>
         </form>
     </div>
 </body>
