@@ -1,4 +1,4 @@
-"""DD1750 core - Items only, no admin fields."""
+"""DD1750 core - Preserve form fields."""
 
 import io
 import math
@@ -114,17 +114,24 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0)
     print(f"Items: {len(items)}")
     
     if not items:
-        try:
-            reader = PdfReader(template_path)
-            writer = PdfWriter()
-            writer.add_page(reader.pages[0])
-            with open(output_path, 'wb') as f:
-                writer.write(f)
-        except:
-            pass
         return output_path, 0
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
+    
+    # Read template
+    reader = PdfReader(template_path)
+    
+    # Get form fields from first page before modification
+    form_fields = {}
+    try:
+        fields = reader.get_fields()
+        if fields:
+            for key, value in fields.items():
+                if isinstance(value, dict) and '/V' in value:
+                    form_fields[key] = value['/V']
+    except:
+        pass
+    
     writer = PdfWriter()
     
     for page_num in range(total_pages):
@@ -132,6 +139,10 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0)
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
+        # Get fresh page from reader
+        page = reader.pages[page_num]
+        
+        # Create overlay
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
         first_row = Y_TABLE_TOP - 5.0
@@ -158,10 +169,15 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0)
         c.save()
         packet.seek(0)
         
+        # Merge overlay
         overlay = PdfReader(packet)
-        page = PdfReader(template_path).pages[0]
         page.merge_page(overlay.pages[0])
+        
         writer.add_page(page)
+    
+    # Restore form fields
+    if form_fields:
+        writer.set_fields(form_fields)
     
     with open(output_path, 'wb') as f:
         writer.write(f)
