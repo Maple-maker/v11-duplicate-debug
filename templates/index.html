@@ -1,28 +1,166 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DD1750 Converter</title>
     <style>
-        body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 10px; }
-        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; }
-        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-bottom: 5px; }
+        .subtitle { color: #666; margin-bottom: 25px; }
+        
+        .section {
+            background: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #1565c0;
+            margin-bottom: 15px;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px dashed #ddd;
+            border-radius: 5px;
+            background: #f9f9f9;
+            cursor: pointer;
+        }
+        
+        input[type="file"]:hover {
+            border-color: #3498db;
+            background: #ecf0f1;
+        }
+        
+        .upload-section {
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        
+        .hint {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+        
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #2980b9;
+        }
+        
+        .flash-messages {
+            margin-bottom: 20px;
+        }
+        
+        .flash {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .flash.error {
+            background: #fee;
+            color: #c0392b;
+            border: 1px solid #fcc;
+        }
+        
+        .flash.success {
+            background: #efe;
+            color: #27ae60;
+            border: 1px solid #cfc;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>DD1750 Converter</h1>
+        <p class="subtitle">Convert BOM PDFs to DD1750 forms</p>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
         <form method="POST" action="/generate" enctype="multipart/form-data">
-            <div class="upload">
-                <label>BOM PDF</label>
-                <input type="file" name="bom_file" accept=".pdf" required>
+            <div class="section">
+                <h3>Upload Files</h3>
+                <div class="grid">
+                    <div>
+                        <label for="bom_file">BOM PDF File</label>
+                        <input type="file" id="bom_file" name="bom_file" accept=".pdf" required>
+                        <p class="hint">Upload your BOM PDF (like B49.pdf)</p>
+                    </div>
+                    <div>
+                        <label for="template_file">DD1750 Template PDF</label>
+                        <input type="file" id="template_file" name="template_file" accept=".pdf" required>
+                        <p class="hint">Upload your blank DD1750 template</p>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <label for="start_page">Start Page (0-based)</label>
+                    <input type="number" id="start_page" name="start_page" value="0" min="0" style="width: 100px;">
+                    <p class="hint">Use 0 for normal BOMs. If BOM has a cover sheet, try 1.</p>
+                </div>
             </div>
-            <div class="upload">
-                <label>DD1750 Template</label>
-                <input type="file" name="template_file" accept=".pdf" required>
-            </div>
-            <button type="submit">Generate</button>
+            
+            <button type="submit">Generate DD1750</button>
         </form>
     </div>
 </body>
