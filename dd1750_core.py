@@ -15,20 +15,18 @@ from reportlab.lib.pagesizes import letter
 
 PAGE_W, PAGE_H = letter
 
-# === ADMIN FIELD POSITIONS (TOP SECTION) ===
-# Adjust these Y values based on your template
+# Admin positions - adjust Y values as needed
 ADMIN_COORDS = {
-    'unit': {'x': 50, 'y': 735},           # UNIT box
-    'requisition': {'x': 280, 'y': 735},   # REQUISITION NO. box
-    'page': {'x': 500, 'y': 735},          # PAGE box
-    'date': {'x': 50, 'y': 710},           # DATE box
-    'order': {'x': 280, 'y': 710},         # ORDER NO. box
-    'boxes': {'x': 480, 'y': 710},         # TOTAL NO. OF BOXES box
-    'packed_by': {'x': 44, 'y': 115},      # PACKED BY (on every page)
-    'received_by': {'x': 300, 'y': 115},   # RECEIVED BY (on every page)
+    'unit': {'x': 50, 'y': 735},
+    'requisition': {'x': 280, 'y': 735},
+    'page': {'x': 500, 'y': 735},
+    'date': {'x': 50, 'y': 710},
+    'order': {'x': 280, 'y': 710},
+    'boxes': {'x': 480, 'y': 710},
+    'packed_by': {'x': 44, 'y': 115},
+    'received_by': {'x': 300, 'y': 115},
 }
 
-# Table positions
 X_BOX_L, X_BOX_R = 44.0, 88.0
 X_CONTENT_L, X_CONTENT_R = 88.0, 365.0
 X_UOI_L, X_UOI_R = 365.0, 408.5
@@ -89,7 +87,6 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         if not lv_cell or str(lv_cell).strip().upper() != 'B':
                             continue
                         
-                        # Get description
                         desc_cell = row[desc_idx] if desc_idx < len(row) else None
                         description = ""
                         if desc_cell:
@@ -103,7 +100,6 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         if not description:
                             continue
                         
-                        # Get NSN
                         nsn = ""
                         if mat_idx is not None and mat_idx < len(row):
                             mat_cell = row[mat_idx]
@@ -112,10 +108,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 if match:
                                     nsn = match.group(1)
                         
-                        # Get quantity - Try column first
                         qty = 1
-                        
-                        # Strategy 1: Qty column
                         if qty_idx is not None and qty_idx < len(row):
                             qty_cell = row[qty_idx]
                             if qty_cell:
@@ -124,7 +117,6 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 if qty_match:
                                     qty = int(qty_match.group(1))
                         
-                        # Strategy 2: Last word of description if it's a number
                         if qty == 1:
                             parts = description.split()
                             if parts and parts[-1].isdigit():
@@ -139,4 +131,95 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     return items
 
 
-def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0
+def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0, admin_data=None):
+    if admin_data is None:
+        admin_data = {}
+    
+    items = extract_items_from_pdf(bom_path, start_page)
+    
+    if not items:
+        try:
+            reader = PdfReader(template_path)
+            writer = PdfWriter()
+            writer.add_page(reader.pages[0])
+            with open(output_path, 'wb') as f:
+                writer.write(f)
+        except:
+            pass
+        return output_path, 0
+    
+    total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
+    writer = PdfWriter()
+    
+    for page_num in range(total_pages):
+        start_idx = page_num * ROWS_PER_PAGE
+        end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
+        page_items = items[start_idx:end_idx]
+        
+        packet = io.BytesIO()
+        c = canvas.Canvas(packet, pagesize=letter)
+        
+        first_row_top = Y_TABLE_TOP_LINE - 5.0
+        
+        for i, item in enumerate(page_items):
+            y = first_row_top - (i * ROW_H)
+            y_desc = y - 7.0
+            y_nsn = y - 12.2
+            
+            c.setFont("Helvetica", 8)
+            c.drawCentredString((X_BOX_L + X_BOX_R) / 2, y_desc, str(item.line_no))
+            
+            c.setFont("Helvetica", 7)
+            desc = item.description[:50] if len(item.description) > 50 else item.description
+            c.drawString(X_CONTENT_L + PAD_X, y_desc, desc)
+            
+            if item.nsn:
+                c.setFont("Helvetica", 6)
+                c.drawString(X_CONTENT_L + PAD_X, y_nsn, f"NSN: {item.nsn}")
+            
+            c.setFont("Helvetica", 8)
+            c.drawCentredString((X_UOI_L + X_UOI_R) / 2, y_desc, "EA")
+            c.drawCentredString((X_INIT_L + X_INIT_R) / 2, y_desc, str(item.qty))
+            c.drawCentredString((X_SPARES_L + X_SPARES_R) / 2, y_desc, "0")
+            c.drawCentredString((X_TOTAL_L + X_TOTAL_R) / 2, y_desc, str(item.qty))
+        
+        # Admin fields
+        for key, coords in ADMIN_COORDS.items():
+            if key == 'page' and total_pages <= 1:
+                continue
+            
+            value = None
+            if key == 'requisition' and admin_data.get('requisition_no'):
+                value = f"REQ: {admin_data['requisition_no']}"
+            elif key == 'order' and admin_data.get('order_no'):
+                value = f"ORDER: {admin_data['order_no']}"
+            elif key == 'boxes' and admin_data.get('num_boxes'):
+                value = f"BOXES: {admin_data['num_boxes']}"
+            elif key == 'received_by':
+                value = "RECEIVED BY:"
+            elif admin_data.get(key):
+                value = admin_data[key]
+            
+            if value:
+                c.setFont("Helvetica", 8)
+                c.drawString(coords['x'], coords['y'], str(value)[:30])
+                
+                if key == 'packed_by':
+                    c.setFont("Helvetica", 6)
+                    c.drawString(coords['x'], coords['y'] - 10, "(Signature)")
+                elif key == 'received_by':
+                    c.setFont("Helvetica", 6)
+                    c.drawString(coords['x'], coords['y'] - 10, "(Signature)")
+        
+        c.save()
+        packet.seek(0)
+        
+        overlay = PdfReader(packet)
+        page = PdfReader(template_path).pages[0]
+        page.merge_page(overlay.pages[0])
+        writer.add_page(page)
+    
+    with open(output_path, 'wb') as f:
+        writer.write(f)
+    
+    return output_path, len(items)
