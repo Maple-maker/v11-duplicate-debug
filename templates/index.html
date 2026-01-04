@@ -2,83 +2,34 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>DD1750 Converter - Fixed</title>
+    <title>DD1750 Converter</title>
     <style>
-        body { font-family: Arial; max-width: 700px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; margin-bottom: 10px; }
-        
-        .info-box { background: #fff3e0; padding: 20px; border-radius: 8px; border-left: 4px solid #856404; margin-bottom: 20px; }
-        .info-box h3 { margin-top: 0; color: #856404; font-size: 16px; margin-bottom: 10px; }
-        .info-box p { margin: 0; color: #555; font-size: 14px; line-height: 1.5; }
-        .info-box ul { margin: 10px 0 0 20px; padding-left: 20px; }
-        .info-box li { margin-bottom: 8px; font-size: 14px; }
-        
-        .upload-section { margin-bottom: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }
-        
-        input[type="file"] { width: 100%; border: 2px dashed #ccc; padding: 10px; }
-        
-        button { background: #1976d2; color: white; border: none; padding: 15px 30px; border-radius: 5px; font-size: 16px; cursor: pointer; display: block; width: 100%; }
-        button:hover { background: #1565c0; }
-        
-        .note { background: #fff9c4; padding: 15px; border-radius: 8px; margin-bottom: 20px; color: #333; font-style: italic; }
-        
-        .checkbox-container { display: flex; align-items: center; margin-top: 10px; margin-bottom: 20px; padding: 10px; background: #f0f4f4; border-radius: 5px; }
-        .checkbox-container input[type="checkbox"] { margin-right: 10px; transform: scale(1.2); }
-        .checkbox-container label { margin: 0; font-size: 14px; color: #333; }
-        
-        .error { padding: 15px; background: #ffebee; color: #c62828; border-radius: 8px; border: 1px solid #ef9ba8; margin-bottom: 20px; }
+        body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 10px; }
+        h1 { color: #333; margin-bottom: 5px; }
+        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; }
+        label { display: block; margin-bottom: 5px; }
+        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; }
+        .error { padding: 10px; background: #ffebee; color: #c62828; border-radius: 4px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>DD1750 Converter - Fixed</h1>
+        <h1>DD1750 Converter</h1>
         
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    {% if category == 'error' %}
-                        <div class="error">{{ message }}</div>
-                    {% endif %}
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
-        <div class="info-box">
-            <h3>New! Auto-Combine Feature</h3>
-            <p>Our previous tool had issues with PDF form fields. We've added a fix using <strong>pdftk</strong>, a standard PDF toolkit that handles form fields correctly.</p>
-            <p><strong>Instructions:</strong></p>
-            <ul>
-                <li>Fill in your DD1750 template (Unit, Packed By, Date, etc.) and SAVE IT.</li>
-                <li>Check the <strong>"Auto-Combine with Template"</strong> box below.</li>
-                <li>Click Generate.</li>
-                <li>Download the PDF.</li>
-                <li>Open in <strong>Adobe Acrobat Pro</strong> (or <strong>Preview/Acrobat</strong> on Mac).</li>
-                <li>Place the generated items PDF on top of your filled template.</li>
-                <li>Save the combined PDF.</li>
-            </ul>
-            <div class="note">
-                <strong>Note:</strong> If "Auto-Combine" is checked, we attempt to merge automatically. If unchecked, you just get the items list to print manually. This ensures the admin section on your template stays intact.
-            </div>
-        </div>
+        {% if error %}
+            <div class="error">{{ error }}</div>
+        {% endif %}
         
         <form method="POST" action="/generate" enctype="multipart/form-data">
-            <div class="upload-section">
+            <div class="upload">
                 <label>BOM PDF</label>
                 <input type="file" name="bom_file" accept=".pdf" required>
             </div>
-            
-            <div class="upload-section">
-                <label>DD1750 Template (Filled with Admin Info)</label>
+            <div class="upload">
+                <label>DD1750 Template</label>
                 <input type="file" name="template_file" accept=".pdf" required>
             </div>
-            
-            <div class="checkbox-container">
-                <input type="checkbox" id="auto_combine" name="auto_combine">
-                <label for="auto_combine"><strong>Auto-Combine with Template</strong> (Uses pdftk to merge)</label>
-            </div>
-            
             <button type="submit">Generate</button>
         </form>
     </div>
