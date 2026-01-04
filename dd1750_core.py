@@ -1,10 +1,10 @@
-"""DD1750 core - Simple fix."""
+"""DD1750 core - Fill form fields that propagate to all pages."""
 
 import io
 import math
 import re
 from dataclasses import dataclass
-from typing import List
+from typing import List, Dict, Optional
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
@@ -109,7 +109,11 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     return items
 
 
-def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0):
+def generate_dd1750_from_pdf(bom_path: str, template_path: str, output_path: str,
+                            start_page: int = 0, admin_data: Dict = None):
+    if admin_data is None:
+        admin_data = {}
+    
     items = extract_items_from_pdf(bom_path, start_page)
     print(f"Items: {len(items)}")
     
@@ -117,18 +121,60 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0)
         return output_path, 0
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
+    
+    # Read template
+    reader = PdfReader(template_path)
     writer = PdfWriter()
     
+    # Fill form fields FIRST
+    try:
+        # Try to access form fields
+        if reader.get_fields():
+            print(f"Form fields found: {list(reader.get_fields().keys())}")
+            
+            # Common field name mappings
+            field_map = {
+                'unit': ['unit', 'Unit', 'UNIT', 'unit_name'],
+                'date': ['date', 'Date', 'DATE'],
+                'requisition_no': ['requisition', 'requisition_no', 'ReqNo', 'REQ'],
+                'order_no': ['order', 'order_no', 'OrderNo', 'ORDER'],
+                'num_boxes': ['boxes', 'num_boxes', 'total_boxes', 'Boxes'],
+                'packed_by': ['packed_by', 'PackedBy', 'Packed', 'packed'],
+                'received_by': ['received_by', 'ReceivedBy', 'Received'],
+                'end_item': ['end_item', 'EndItem', 'EndItemName'],
+                'model': ['model', 'Model', 'ModelNo'],
+            }
+            
+            # Set field values
+            for admin_field, value in admin_data.items():
+                if not value:
+                    continue
+                
+                if admin_field in field_map:
+                    possible_names = field_map[admin_field]
+                    for name in possible_names:
+                        try:
+                            if name in reader.get_fields():
+                                reader.get_fields()[name]['/V'] = value
+                                reader.get_fields()[name]['/DV'] = value
+                                print(f"Set field '{name}' = '{value}'")
+                                break
+                        except:
+                            continue
+    
+    except Exception as e:
+        print(f"Form field error (ignoring): {e}")
+    
+    # Process each page
     for page_num in range(total_pages):
         start_idx = page_num * ROWS_PER_PAGE
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
-        # Read template page
-        reader = PdfReader(template_path)
-        page = reader.pages[0]
+        # Get page from reader
+        page = reader.pages[page_num]
         
-        # Create overlay
+        # Create overlay ONLY for items (not admin fields)
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
         first_row = Y_TABLE_TOP - 5.0
@@ -157,10 +203,7 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0)
         
         # Merge overlay
         overlay = PdfReader(packet)
-        
-        # Flatten the page content - prevents field duplication
         page.merge_page(overlay.pages[0])
-        
         writer.add_page(page)
     
     with open(output_path, 'wb') as f:
