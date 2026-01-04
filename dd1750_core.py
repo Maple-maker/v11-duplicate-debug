@@ -1,4 +1,4 @@
-"""DD1750 core - Items only, no admin overlay."""
+"""DD1750 core - Items only, no admin overlay at all."""
 
 import io
 import math
@@ -14,6 +14,7 @@ from reportlab.lib.pagesizes import letter
 
 PAGE_W, PAGE_H = letter
 
+# Only table positions - NO admin positions at all
 X_BOX_L, X_BOX_R = 44.0, 88.0
 X_CONTENT_L, X_CONTENT_R = 88.0, 365.0
 X_UOI_L, X_UOI_R = 365.0, 408.5
@@ -132,32 +133,42 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path, start_page=0)
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
+        # Create overlay - ONLY the item table area
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
+        
+        # Start drawing at the TOP of the TABLE AREA only
+        # Don't touch anything above Y=616 (the table header line)
         first_row = Y_TABLE_TOP - 5.0
         
         for i, item in enumerate(page_items):
             y = first_row - (i * ROW_H)
             
+            # Box number
             c.setFont("Helvetica", 8)
             c.drawCentredString(66, y - 7, str(item.line_no))
             
+            # Description
             c.setFont("Helvetica", 7)
             c.drawString(92, y - 7, item.description[:50])
             
+            # NSN
             if item.nsn:
                 c.setFont("Helvetica", 6)
                 c.drawString(92, y - 12, f"NSN: {item.nsn}")
             
+            # Quantities
             c.setFont("Helvetica", 8)
             c.drawCentredString(386, y - 7, "EA")
             c.drawCentredString(431, y - 7, str(item.qty))
             c.drawCentredString(484, y - 7, "0")
             c.drawCentredString(540, y - 7, str(item.qty))
         
+        # Save - NO admin fields drawn at all
         c.save()
         packet.seek(0)
         
+        # Merge with template
         overlay = PdfReader(packet)
         page = PdfReader(template_path).pages[0]
         page.merge_page(overlay.pages[0])
