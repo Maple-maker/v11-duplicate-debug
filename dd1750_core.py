@@ -1,4 +1,4 @@
-"""DD1750 core - Robust version."""
+"""DD1750 core - Fixed for multi-page."""
 
 import io
 import math
@@ -112,13 +112,19 @@ def generate_dd1750_from_pdf(bom_path, template_path, output_path):
     writer = PdfWriter()
     
     template = PdfReader(template_path)
+    template_pages = len(template.pages)
+    first_page = template.pages[0]
     
     for page_num in range(total_pages):
         start_idx = page_num * ROWS_PER_PAGE
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
-        page = template.pages[page_num]
+        # Use template page (recycle first page if needed)
+        if page_num < template_pages:
+            page = template.pages[page_num]
+        else:
+            page = first_page
         
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
