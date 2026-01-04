@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>DD1750 Converter</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; margin-bottom: 5px; }
+        .subtitle { color: #666; margin-bottom: 25px; }
+        .admin-section { background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .admin-section h3 { margin-top: 0; color: #1565c0; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        .upload-section { margin-bottom: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        input[type="file"] { border: 2px dashed #ccc; padding: 10px; }
+        button { background: #1976d2; color: white; border: none; padding: 15px 30px; border-radius: 5px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #1565c0; }
+        .flash { padding: 10px; background: #ffebee; color: #c62828; border-radius: 4px; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DD1750 Converter</h1>
+        <p class="subtitle">BOM to DD1750 with admin fields for joint inspection</p>
+        
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        
+        <form method="POST" action="/generate" enctype="multipart/form-data">
+            <!-- Admin Fields -->
+            <div class="admin-section">
+                <h3>Admin Information</h3>
+                <div class="grid">
+                    <div>
+                        <label>Packed By</label>
+                        <input type="text" name="packed_by" placeholder="Name">
+                    </div>
+                    <div>
+                        <label>Date</label>
+                        <input type="date" name="date" value="{{ current_date }}">
+                    </div>
+                    <div>
+                        <label>Requisition No.</label>
+                        <input type="text" name="requisition_no" placeholder="REQ-12345">
+                    </div>
+                    <div>
+                        <label>Order No.</label>
+                        <input type="text" name="order_no" placeholder="ORD-67890">
+                    </div>
+                    <div>
+                        <label>No. of Boxes</label>
+                        <input type="text" name="num_boxes" placeholder="1">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- File Uploads -->
+            <div class="upload-section">
+                <label>BOM PDF</label>
+                <input type="file" name="bom_file" accept=".pdf" required>
+            </div>
+            
+            <div class="upload-section">
+                <label>DD1750 Template PDF</label>
+                <input type="file" name="template_file" accept=".pdf" required>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label>Start Page (0-based)</label>
+                <input type="number" name="start_page" value="0" min="0">
+            </div>
+            
+            <button type="submit">Generate DD1750</button>
+        </form>
+    </div>
+</body>
+</html>
