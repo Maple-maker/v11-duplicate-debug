@@ -20,28 +20,23 @@ def generate():
     bom_file = request.files['bom_file']
     template_file = request.files['template_file']
     
-    if bom_file.filename == '' or template_file.filename == '':
-        return render_template('index.html')
-    
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             bom_path = os.path.join(tmpdir, 'bom.pdf')
-            template_path = os.path.join(tmpdir, 'template.pdf')
-            output_path = os.path.join(tmpdir, 'DD1750.pdf')
+            tpl_path = os.path.join(tmpdir, 'template.pdf')
+            out_path = os.path.join(tmpdir, 'DD1750.pdf')
             
             bom_file.save(bom_path)
-            template_file.save(template_path)
+            template_file.save(tpl_path)
             
-            output_path, count = generate_dd1750_from_pdf(
-                bom_pdf_path=bom_path,
-                template_pdf_path=template_path,
-                out_pdf_path=output_path
-            )
+            out_path, count = generate_dd1750_from_pdf(bom_path, tpl_path, out_path)
             
-            return send_file(output_path, as_attachment=True, download_name='DD1750.pdf')
+            if count == 0:
+                return render_template('index.html')
+            
+            return send_file(out_path, as_attachment=True, download_name='DD1750.pdf')
     
     except Exception as e:
-        print(f"ERROR: {e}")
         return render_template('index.html')
 
 if __name__ == '__main__':
