@@ -19,57 +19,45 @@ def index():
 @app.route('/generate', methods=['POST'])
 def generate():
     if 'bom_file' not in request.files:
-        return render_template('index.html', error="No BOM PDF uploaded")
-    
-    if 'template_file' not in request.files:
-        return render_template('index.html', error="No DD1750 Template PDF uploaded")
+        return render_template('index.html')
     
     bom_file = request.files['bom_file']
+    
+    if bom_file.filename == '':
+        return render_template('index.html')
+    
+    if not allowed_file(bom_file.filename):
+        return render_template('index.html', error="BOM file must be a PDF")
+    
+    if 'template_file' not in request.files:
+        return render_template('index.html')
+    
     template_file = request.files['template_file']
     
-    if bom_file.filename == '' or template_file.filename == '':
-        return render_template('index.html', error="Both files must be selected")
+    if template_file.filename == '':
+        return render_template('index.html')
     
-    if not (allowed_file(bom_file.filename) and allowed_file(template_file.filename)):
-        return render_template('index.html', error="Both files must be PDF format")
+    if not allowed_file(template_file.filename):
+        return render_template('index.html', error="Template file must be a PDF")
     
     try:
-        admin_data = {
-            'unit': request.form.get('unit', '').strip(),
-            'packed_by': request.form.get('packed_by', '').strip(),
-            'date': request.form.get('date', '').strip(),
-            'requisition_no': request.form.get('requisition_no', '').strip(),
-            'order_no': request.form.get('order_no', '').strip(),
-            'num_boxes': request.form.get('num_boxes', '').strip(),
-            'end_item': request.form.get('end_item', '').strip(),
-            'model': request.form.get('model', '').strip(),
-        }
-        
         with tempfile.TemporaryDirectory() as tmpdir:
             bom_path = os.path.join(tmpdir, 'bom.pdf')
             template_path = os.path.join(tmpdir, 'template.pdf')
-            output_path = os.path.join(tmpdir, 'DD1750.pdf')
+            out_path = os.path.join(tmpdir, 'DD1750.pdf')
             
             bom_file.save(bom_path)
             template_file.save(template_path)
             
-            output_path, count = generate_dd1750_from_pdf(
-                bom_pdf_path=bom_path,
-                template_pdf_path=template_path,
-                out_pdf_path=output_path,
-                start_page=0,
-                admin_data=admin_data
-            )
+            start_page = int(request.form.get('start_page', 0))
+            out_path, count = generate_dd1750_from_pdf(bom_path, template_path, out_path, start_page)
             
             if count == 0:
-                return render_template('index.html', error="No items found in BOM PDF")
+                return render_template('index.html', error="No items found in BOM")
             
-            return send_file(output_path, as_attachment=True, download_name='DD1750_Filled.pdf')
+            return send_file(out_path, as_attachment=True, download_name='DD1750.pdf')
     
     except Exception as e:
-        print(f"ERROR: {e}")
-        import traceback
-        traceback.print_exc()
         return render_template('index.html', error=f"Error: {str(e)}")
 
 if __name__ == '__main__':
