@@ -1,4 +1,4 @@
-"""DD1750 core - Fixed with smart description extraction."""
+"""DD1750 core - Items only (no admin)."""
 
 import io
 import math
@@ -37,61 +37,6 @@ class BomItem:
     qty: int
 
 
-def _extract_middle_text_smart(text: str) -> str:
-    """
-    Extract the middle/actual description from a table cell.
-    
-    Logic:
-    1. Split text by newlines.
-    2. Filter out garbage lines (too short, all caps, look like codes).
-    3. Select the best line based on length and content.
-    """
-    if not text:
-        return ""
-    
-    lines = [ln for ln in text.strip().split('\n') if ln.strip()]
-    
-    if not lines:
-        return ""
-    
-    # Filter out obvious garbage
-    candidates = []
-    for ln in lines:
-        # Skip single characters or very short strings
-        if len(ln) < 5:
-            continue
-        
-        # Skip strings that are all caps (likely headers/codes)
-        if ln.isupper() and not any(c.islower() for c in ln):
-            continue
-        
-        # Skip strings that look like codes (WTY, ARC, etc.) even if mixed case
-        if re.match(r'^(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G|TMY|SMD|ECC)$', ln.upper()):
-            continue
-        
-        candidates.append(ln)
-    
-    if not candidates:
-        # If all filtered out, check first line again
-        line_1 = lines[0].strip()
-        if len(line_1) > 10:
-            return line_1  # Use the first line if it's substantial
-        return ""
-    
-    # Select best candidate
-    # Prefer longer lines, lines with mixed case (more likely to be nomenclature)
-    # Prefer lines with numbers or special characters
-    candidates.sort(key=lambda x: (len(x), any(c.islower() for c in x)), reverse=True)
-    
-    description = candidates[0].strip()
-    
-    # Clean final description
-    # Remove trailing garbage
-    description = re.sub(r'\s+', ' ', description).strip()
-    
-    return description
-
-
 def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
     items = []
     
@@ -112,7 +57,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                             text = str(cell).upper()
                             if 'LV' in text or 'LEVEL' in text:
                                 lv_idx = i
-                            elif 'DESC' in text or 'NOMENCLATURE' in text:
+                            elif 'DESC' in text:
                                 desc_idx = i
                             elif 'MATERIAL' in text:
                                 mat_idx = i
@@ -133,14 +78,17 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         desc_cell = row[desc_idx] if desc_idx < len(row) else None
                         description = ""
                         if desc_cell:
-                            # Use SMART extractor
-                            description = _extract_middle_text_smart(str(desc_cell))
+                            lines = str(desc_cell).strip().split('\n')
+                            description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
+                            
+                            description = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', description, flags=re.IGNORECASE)
+                            description = re.sub(r'\s+', ' ', description).strip()
                         
                         if not description:
                             continue
                         
                         nsn = ""
-                        if mat_idx is not None and mat_idx < len(row):
+                        if mat_idx > -1 and mat_idx < len(row):
                             mat_cell = row[mat_idx]
                             if mat_cell:
                                 match = re.search(r'\b(\d{9})\b', str(mat_cell))
@@ -148,7 +96,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                     nsn = match.group(1)
                         
                         qty = 1
-                        if auth_idx is not None and auth_idx < len(row):
+                        if auth_idx > -1 and auth_idx < len(row):
                             qty_cell = row[auth_idx]
                             if qty_cell:
                                 match = re.search(r'(\d+)', str(qty_cell))
@@ -170,29 +118,35 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
 
 
 def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, start_page: int = 0):
+    """Generate items ONLY PDF. Form fields must be filled in Adobe Acrobat."""
+    
     try:
         items = extract_items_from_pdf(bom_path, start_page)
         
-        print(f"\nItems found: {len(items)}")
+        print(f"Items found: {len(items)}")
         
         if not items:
             return out_path, 0
         
         total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
+        
         writer = PdfWriter()
+        template = PdfReader(template_path)
         
         for page_num in range(total_pages):
             start_idx = page_num * ROWS_PER_PAGE
             end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
             page_items = items[start_idx:end_idx]
             
+            # Create items page (no template merge)
             packet = io.BytesIO()
-            c = canvas.Canvas(packet, pagesize=(PAGE_W, PAGE_H))
+            c = canvas.Canvas(packet, pagesize=letter)
             
-            first_row = Y_TABLE_TOP - 5.0
+            # Draw items
+            first_row_top = Y_TABLE_TOP - 5.0
             
             for i, item in enumerate(page_items):
-                y = first_row - (i * ROW_H)
+                y = first_row_top - (i * ROW_H)
                 
                 c.setFont("Helvetica", 8)
                 c.drawCentredString((X_BOX_L + X_BOX_R) / 2, y - 7, str(item.line_no))
@@ -206,19 +160,4 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, s
                 
                 c.setFont("Helvetica", 8)
                 c.drawCentredString((X_UOI_L + X_UOI_R) / 2, y - 7, "EA")
-                c.drawCentredString((X_INIT_L + X_INIT_R) / 2, y - 7, str(item.qty))
-                c.drawCentredString((X_SPARES_L + X_SPARES_R) / 2, y - 7, "0")
-                c.drawCentredString((X_TOTAL_L + X_TOTAL_R) / 2, y - 7, str(item.qty))
-            
-            c.save()
-            packet.seek(0)
-            
-            overlay = PdfReader(packet)
-            page = PdfReader(template_path).pages[page_num]
-            page.merge_page(overlay.pages[0])
-            writer.add_page(page)
-    
-    with open(out_path, 'wb') as f:
-        writer.write(f)
-    
-    return out_path, len(items)
+                c.drawCentredString((X_INIT_L +
