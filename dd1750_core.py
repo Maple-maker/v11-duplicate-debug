@@ -1,4 +1,4 @@
-"""DD1750 core - Items Only."""
+"""DD1750 core - Simple, Items Only."""
 
 import io
 import math
@@ -9,6 +9,8 @@ from typing import List
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.lib.pagesizes import letter
 
 
 PAGE_W, PAGE_H = letter
@@ -39,57 +41,59 @@ class BomItem:
 def extract_items_from_pdf(pdf_path: str) -> List[BomItem]:
     items = []
     
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                tables = page.extract_tables()
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables()
+            
+            for table in tables:
+                if len(table) < 2:
+                    continue
                 
-                for table in tables:
-                    if len(table) < 2:
+                header = table[0]
+                lv_idx = None
+                desc_idx = None
+                mat_idx = None
+                auth_idx = None
+                
+                for i, cell in enumerate(header):
+                    if cell:
+                        text = str(cell).upper()
+                        if 'LV' in text or 'LEVEL' in text:
+                            lv_idx = i
+                        elif 'DESC' in text:
+                            desc_idx = i
+                        elif 'MATERIAL' in text:
+                            mat_idx = i
+                        elif 'AUTH' in text and 'QTY' in text:
+                            auth_idx = i
+                
+                if lv_idx is None or desc_idx is None:
+                    continue
+                
+                for row in table[1:]:
+                    if not any(cell for cell in row if cell):
                         continue
                     
-                    header = table[0]
-                    lv_idx = None
-                    desc_idx = None
-                    mat_idx = None
-                    auth_idx = None
-                    
-                    for i, cell in enumerate(header):
-                        if cell:
-                            text = str(cell).upper()
-                            if 'LV' in text or 'LEVEL' in text:
-                                lv_idx = i
-                            elif 'DESC' in text:
-                                desc_idx = i
-                            elif 'MATERIAL' in text:
-                                mat_idx = i
-                            elif 'AUTH' in text and 'QTY' in text:
-                                auth_idx = i
-                    
-                    if lv_idx is None or desc_idx is None:
+                    lv_cell = row[lv_idx]
+                    if not lv_cell or lv_cell.strip().upper() != 'B':
                         continue
                     
-                    for row in table[1:]:
-                        if not any(cell for cell in row if cell):
-                            continue
+                    desc_cell = row[desc_idx]
+                    description = ""
+                    if desc_cell:
+                        lines = desc_cell.strip().split('\n')
+                        if len(lines) >= 2:
+                            description = lines[1].strip()
+                        else:
+                            description = lines[0].strip()
+                        if '(' in description:
+                            description = description.split('(')[0].strip()
                         
-                        lv_cell = row[lv_idx] if lv_idx < len(row) else None
-                        if not lv_cell or str(lv_cell).strip().upper() != 'B':
-                            continue
-                        
-                        desc_cell = row[desc_idx] if desc_idx < len(row) else None
-                        description = ""
-                        if desc_cell:
-                            lines = str(desc_cell).strip().split('\n')
-                            description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
-                            if '(' in description:
-                                description = description.split('(')[0].strip()
-                            
                         if not description:
                             continue
                         
                         nsn = ""
-                        if mat_idx is not None and mat_idx < len(row):
+                        if mat_idx is not None:
                             mat_cell = row[mat_idx]
                             if mat_cell:
                                 match = re.search(r'\b(\d{9})\b', str(mat_cell))
@@ -97,23 +101,14 @@ def extract_items_from_pdf(pdf_path: str) -> List[BomItem]:
                                     nsn = match.group(1)
                         
                         qty = 1
-                        if auth_idx is not None and auth_idx < len(row):
+                        if auth_idx is not None:
                             qty_cell = row[auth_idx]
                             if qty_cell:
                                 match = re.search(r'(\d+)', str(qty_cell))
                                 if match:
                                     qty = int(match.group(1))
                         
-                        items.append(BomItem(
-                            line_no=len(items) + 1,
-                            description=description.strip(),
-                            nsn=nsn,
-                            qty=qty
-                        ))
-    
-    except Exception as e:
-        print(f"ERROR: {e}")
-        return []
+                        items.append(BomItem(len(items) + 1, description[:100], nsn, qty))
     
     return items
 
@@ -131,6 +126,7 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
     writer = PdfWriter()
+    template = PdfReader(template_path)
     
     for page_num in range(total_pages):
         start_idx = page_num * ROWS_PER_PAGE
@@ -138,7 +134,7 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
         page_items = items[start_idx:end_idx]
         
         packet = io.BytesIO()
-        c = canvas.Canvas(packet, pagesize=(PAGE_W, PAGE_H))
+        c = canvas.Canvas(packet, pagesize=letter)
         first_row = Y_TABLE_TOP - 5.0
         
         for i, item in enumerate(page_items):
@@ -164,7 +160,8 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
         packet.seek(0)
         
         overlay = PdfReader(packet)
-        page = PdfReader(template_path).pages[page_num]
+        template = PdfReader(template_path)
+        page = template.pages[page_num]
         page.merge_page(overlay.pages[0])
         writer.add_page(page)
     
