@@ -21,43 +21,52 @@ def generate():
     if 'bom_file' not in request.files:
         return render_template('index.html')
     
-    bom_file = request.files['bom_file']
-    
-    if bom_file.filename == '':
-        return render_template('index.html')
-    
-    if not allowed_file(bom_file.filename):
-        return render_template('index.html', error="BOM file must be a PDF")
-    
     if 'template_file' not in request.files:
         return render_template('index.html')
     
+    bom_file = request.files['bom_file']
     template_file = request.files['template_file']
     
-    if template_file.filename == '':
+    if bom_file.filename == '' or template_file.filename == '':
         return render_template('index.html')
     
-    if not allowed_file(template_file.filename):
-        return render_template('index.html', error="Template file must be a PDF")
+    if not (allowed_file(bom_file.filename) and allowed_file(template_file.filename)):
+        return render_template('index.html')
     
     try:
+        start_page = int(request.form.get('start_page', 0))
+        
         with tempfile.TemporaryDirectory() as tmpdir:
             bom_path = os.path.join(tmpdir, 'bom.pdf')
             template_path = os.path.join(tmpdir, 'template.pdf')
-            out_path = os.path.join(tmpdir, 'DD1750.pdf')
+            output_path = os.path.join(tmpdir, 'DD1750.pdf')
             
             bom_file.save(bom_path)
             template_file.save(template_path)
             
-            start_page = int(request.form.get('start_page', 0))
-            out_path, count = generate_dd1750_from_pdf(bom_path, template_path, out_path, start_page)
+            # Pass start_page
+            out_path, count = generate_dd1750_from_pdf(
+                bom_pdf_path=bom_path,
+                template_pdf_path=template_path,
+                out_pdf_path=output_path,
+                start_page=start_page
+            )
+            
+            # Check file exists before sending
+            if not os.path.exists(out_path):
+                print(f"ERROR: Output file not created at {output_path}")
+                return render_template('index.html', error="Processing failed. Please check logs.")
             
             if count == 0:
-                return render_template('index.html', error="No items found in BOM")
+                print("DEBUG: count is 0, but file exists. Returning anyway.")
+                return send_file(out_path, as_attachment=True, download_name='DD1750.pdf')
             
             return send_file(out_path, as_attachment=True, download_name='DD1750.pdf')
     
     except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return render_template('index.html', error=f"Error: {str(e)}")
 
 if __name__ == '__main__':
