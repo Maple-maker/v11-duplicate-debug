@@ -8,34 +8,14 @@
         .container { background: white; padding: 30px; border-radius: 10px; }
         h1 { color: #333; margin-bottom: 5px; }
         .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ccc; }
-        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; font-size: 16px; cursor: pointer; }
-        .error { padding: 15px; background: #ffebee; color: #c62828; border-radius: 5px; margin-bottom: 15px; }
-        .info { padding: 15px; background: #e3f2fd; border-radius: 5px; margin-bottom: 15px; color: #333; font-size: 14px; }
-        .info p { margin: 5px 0; }
-        .info ul { margin: 0 0 20px; padding-left: 20px; color: #333; }
+        label { display: block; margin-bottom: 5px; }
+        input[type="file"] { width: 100%; border: 2px dashed #ccc; }
+        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>DD1750 Converter</h1>
-        
-        <div class="info">
-            <h3>How to use:</h3>
-            <p>Upload your BOM PDF and DD1750 Template. Click Generate. The app will extract items and create a filled DD1750 form.</p>
-            <ul>
-                <li><strong>Step 1:</strong> Upload BOM PDF</li>
-                <li><strong>Step 2:</strong> Upload DD1750 Template PDF</li>
-                <li><strong>Step 3:</strong> Click Generate</li>
-                <li><strong>Step 4:</strong> Download DD1750.pdf</li>
-                <li><strong>Step 5:</strong> Open DD1750.pdf in Adobe Acrobat Pro</li>
-                <li><strong>Step 6:</strong> Fill in admin fields (Unit, Packed By, etc.)</li>
-                <li><strong>Step 7:</strong> Save</li>
-            </ul>
-            <p><em>Note:</em> The app prioritizes "OH QTY" (On Hand Quantity) over "AUTH QTY" (Authorized Quantity) for maximum accuracy.</p>
-        </div>
-        
         <form method="POST" action="/generate" enctype="multipart/form-data">
             <div class="upload">
                 <label>BOM PDF</label>
@@ -46,10 +26,10 @@
                 <input type="file" name="template_file" accept=".pdf" required>
             </div>
             <div class="upload">
-                <label>Start Page</label>
-                <input type="number" name="start_page" value="0" min="0" style="width: 100px;">
+                <label>Start Page (0-based)</label>
+                <input type="number" name="start_page" value="0" min="0" style="width: 60px;">
             </div>
-            <button type="submit">Generate DD1750</button>
+            <button type="submit">Generate</button>
         </form>
     </div>
 </body>
