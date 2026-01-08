@@ -1,4 +1,4 @@
-"""DD1750 core - Bulletproof Version."""
+"""DD1750 core - Fixed signature."""
 
 import io
 import math
@@ -15,7 +15,6 @@ from reportlab.lib.pagesizes import letter
 
 PAGE_W, PAGE_H = letter
 
-# Column positions
 X_BOX_L, X_BOX_R = 44.0, 88.0
 X_CONTENT_L, X_CONTENT_R = 88.0, 365.0
 X_UOI_L, X_UOI_R = 365.0, 408.5
@@ -52,9 +51,7 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                     
                     header = table[0]
                     lv_idx = desc_idx = mat_idx = auth_idx = -1
-                    oh_qty_idx = -1
                     
-                    # Identify columns - EXPAND to find OH QTY
                     for i, cell in enumerate(header):
                         if cell:
                             text = str(cell).upper()
@@ -64,8 +61,6 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 desc_idx = i
                             elif 'MATERIAL' in text:
                                 mat_idx = i
-                            elif 'OH' in text and 'QTY' in text:
-                                oh_qty_idx = i
                             elif 'AUTH' in text and 'QTY' in text:
                                 auth_idx = i
                     
@@ -76,30 +71,23 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         if not any(cell for cell in row if cell):
                             continue
                         
-                        # Check Level B (allow B, B9, etc.)
-                        lv_cell = row[lv_idx]
-                        if not lv_cell or str(lv_cell).strip().upper()[:1] != 'B':
+                        lv_cell = row[lv_idx] if lv_idx < len(row) else None
+                        if not lv_cell or str(lv_cell).strip().upper() != 'B':
                             continue
                         
-                        # Extract Description - Use RAW content
                         desc_cell = row[desc_idx]
                         description = ""
                         if desc_cell:
-                            text = str(desc_cell).strip()
-                            
-                            # Remove trailing codes like (WTY ARC, etc.)
-                            text = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', text, flags=re.IGNORECASE)
-                            text = re.sub(r'\s+', ' ', text).strip()
-                            
-                            # Remove parentheses and content after them (NSN)
-                            text = re.sub(r'\(.*$', '', text).strip()
-                            
-                            if not text:
-                                continue
-                            
-                            description = text[:100]
+                            lines = str(desc_cell).strip().split('\n')
+                            description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
+                            if '(' in description:
+                                description = description.split('(')[0].strip()
+                            description = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', description, flags=re.IGNORECASE)
+                            description = re.sub(r'\s+', ' ', description).strip()
                         
-                        # Extract NSN
+                        if not description:
+                            continue
+                        
                         nsn = ""
                         if mat_idx > -1 and mat_idx < len(row):
                             mat_cell = row[mat_idx]
@@ -108,40 +96,27 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 if match:
                                     nsn = match.group(1)
                         
-                        # Extract Quantity - PREFER OH QTY, FALLBACK TO AUTH QTY
                         qty = 1
-                        if oh_qty_idx > -1 and oh_qty_idx < len(row):
-                            qty_cell = row[oh_qty_idx]
-                            if qty_cell:
-                                try:
-                                    qty = int(str(qty_cell).strip())
-                                except:
-                                    qty = 1
-                        elif auth_idx > -1 and auth_idx < len(row):
+                        if auth_idx > -1 and auth_idx < len(row):
                             qty_cell = row[auth_idx]
                             if qty_cell:
-                                try:
-                                    qty = int(str(qty_cell).strip())
-                                except:
-                                    qty = 1
+                                match = re.search(r'(\d+)', str(qty_cell))
+                                if match:
+                                    qty = int(match.group(1))
                         
-                        items.append(BomItem(len(items) + 1, description, nsn, qty))
+                        items.append(BomItem(len(items) + 1, description[:100], nsn, qty))
     
     except Exception as e:
         print(f"ERROR: {e}")
-        import traceback
-        traceback.print_exc()
         return []
     
     return items
 
 
-def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
-    """Generate DD1750 with items overlayed on template."""
-    items = extract_items_from_pdf(bom_path)
+def generate_dd1750_from_pdf(bom_path, template_path, out_path, start_page: int = 0):
+    items = extract_items_from_pdf(bom_path, start_page)
     
     if not items:
-        # If no items, return a minimal PDF
         reader = PdfReader(template_path)
         writer = PdfWriter()
         writer.add_page(reader.pages[0])
@@ -151,8 +126,6 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
     writer = PdfWriter()
-    
-    # Read template
     template = PdfReader(template_path)
     
     for page_num in range(total_pages):
@@ -160,46 +133,39 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
-        # Create overlay
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=letter)
         first_row = Y_TABLE_TOP - 5.0
         
         for i, item in enumerate(page_items):
             y = first_row - (i * ROW_H)
+            y_desc = y - 7.0
+            y_nsn = y - 12.2
             
             c.setFont("Helvetica", 8)
-            c.drawCentredString((X_BOX_L + X_BOX_R) / 2, y - 7, str(item.line_no))
+            c.drawCentredString((X_BOX_L + X_BOX_R) / 2, y_desc, str(item.line_no))
             
             c.setFont("Helvetica", 7)
-            c.drawString(X_CONTENT_L + PAD_X, y - 7, item.description[:50])
+            c.drawString(X_CONTENT_L + PAD_X, y_desc, item.description[:50])
             
             if item.nsn:
                 c.setFont("Helvetica", 6)
-                c.drawString(X_CONTENT_L + PAD_X, y - 12, f"NSN: {item.nsn}")
+                c.drawString(X_CONTENT_L + PAD_X, y_nsn, f"NSN: {item.nsn}")
             
             c.setFont("Helvetica", 8)
-            c.drawCentredString((X_UOI_L + X_UOI_R) / 2, y - 7, "EA")
-            c.drawCentredString((X_INIT_L + X_INIT_R) / 2, y - 7, str(item.qty))
-            c.drawCentredString((X_SPARES_L + X_SPARES_R) / 2, y - 7, "0")
-            c.drawCentredString((X_TOTAL_L + X_TOTAL_R) / 2, y - 7, str(item.qty))
+            c.drawCentredString((X_UOI_L + X_UOI_R) / 2, y_desc, "EA")
+            c.drawCentredString((X_INIT_L + X_INIT_R) / 2, y_desc, str(item.qty))
+            c.drawCentredString((X_SPARES_L + X_SPARES_R) / 2, y_desc, "0")
+            c.drawCentredString((X_TOTAL_L + X_TOTAL_R) / 2, y_desc, str(item.qty))
         
         c.save()
         packet.seek(0)
         
-        # Merge overlay
         overlay = PdfReader(packet)
-        
-        # Get template page (use first page for all to ensure consistency)
-        if page_num < len(template.pages):
-            page = template.pages[page_num]
-        else:
-            page = template.pages[0]
-        
+        page = template.pages[page_num]
         page.merge_page(overlay.pages[0])
         writer.add_page(page)
     
-    # Write to file
     with open(out_path, 'wb') as f:
         writer.write(f)
     
