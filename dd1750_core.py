@@ -1,4 +1,4 @@
-"""DD1750 core - Final Version."""
+"""DD1750 core - Dumb Mode (Maximally Permissive)."""
 
 import io
 import math
@@ -38,103 +38,163 @@ class BomItem:
     qty: int
 
 
+def get_description_dumb(desc_cell) -> str:
+    """Maximally permissive description extraction."""
+    if not desc_cell:
+        return ""
+    
+    text = str(desc_cell).strip()
+    
+    # Strategy 1: Split by newline, pick line 1 (Standard for BCP)
+    lines = text.split('\n')
+    if len(lines) >= 2:
+        description = lines[1].strip()
+    else:
+        # Strategy 2: Fallback to raw text (for EPP/EPP styles)
+        description = lines[0].strip() if lines else text
+    
+    # Cleanup parentheses (remove everything after first '(')
+    if '(' in description:
+        description = description.split('(')[0].strip()
+    
+    # Cleanup trailing codes
+    description = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', description, flags=re.IGNORECASE)
+    description = re.sub(r'\s+', ' ', description).strip()
+    
+    # Filter: Ensure not empty after cleanup
+    if not description or len(description) < 2:
+        # Strategy 3: Last Resort - Use entire raw text
+        description = text.replace('\n', ' ').replace('\r', ' ')
+    
+    return description[:100]
+
+
 def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
+    """Extract items - Dumb Mode."""
     items = []
     
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages[start_page:]:
-            tables = page.extract_tables()
-            
-            for table in tables:
-                if len(table) < 2:
-                    continue
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages[start_page:]:
+                tables = page.extract_tables()
                 
-                header = table[0]
-                lv_idx = desc_idx = mat_idx = auth_idx = -1
-                
-                for i, cell in enumerate(header):
-                    if cell:
-                        text = str(cell).upper()
-                        if 'LV' in text or 'LEVEL' in text:
-                            lv_idx = i
-                        elif 'DESC' in text:
-                            desc_idx = i
-                        elif 'MATERIAL' in text:
-                            mat_idx = i
-                        elif 'OH' in text and 'QTY' in text:
-                            auth_idx = i
-                        elif 'AUTH' in text and 'QTY' in text:
-                            auth_idx = i
-                
-                if lv_idx == -1 or desc_idx == -1:
-                    continue
-                
-                for row in table[1:]:
-                    if not any(cell for cell in row if cell):
+                for table in tables:
+                    if len(table) < 2:
                         continue
                     
-                    lv_cell = row[lv_idx]
-                    if not lv_cell or str(lv_cell).strip().upper() != 'B':
+                    header = table[0]
+                    lv_idx = desc_idx = mat_idx = auth_idx = -1
+                    oh_qty_idx = -1
+                    
+                    # Identify columns
+                    for i, cell in enumerate(header):
+                        if cell:
+                            text = str(cell).upper()
+                            if 'LV' in text or 'LEVEL' in text:
+                                lv_idx = i
+                            elif 'DESC' in text or 'NOMENCLATURE' in text or 'PART NO.' in text:
+                                desc_idx = i
+                            elif 'MATERIAL' in text:
+                                mat_idx = i
+                            elif 'AUTH' in text and 'QTY' in text:
+                                auth_idx = i
+                            elif 'OH' in text and 'QTY' in text:
+                                oh_qty_idx = i
+                    
+                    print(f"DEBUG: Table Columns - LV:{lv_idx}, DESC:{desc_idx}, MAT:{mat_idx}, AUTH:{auth_idx}, OH QTY:{oh_qty_idx}")
+                    
+                    if lv_idx == -1 or desc_idx == -1:
+                        print("DEBUG: Skipping table (no LV or DESC column)")
                         continue
                     
-                    desc_cell = row[desc_idx]
-                    description = ""
-                    if desc_cell:
-                        lines = str(desc_cell).strip().split('\n')
-                        description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
+                    for row in table[1:]:
+                        # Dumb Mode: Don't skip empty rows (just check level)
                         
-                        # Clean parentheses and content after
-                        if '(' in description:
-                            description = description.split('(')[0].strip()
+                        lv_cell = row[lv_idx] if lv_idx < len(row) else None
+                        if not lv_cell:
+                            continue
+                            
+                        # Relaxed check for Level (Accept B, B9, etc.)
+                        lv_text = str(lv_cell).strip()
+                        if not ('B' in lv_text.upper() or lv_text.startswith('B')):
+                            print(f"DEBUG: Skipping row (LV: '{lv_text}')")
+                            continue
                         
-                        # Remove codes
-                        description = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', description, flags=re.IGNORECASE)
-                        description = re.sub(r'\s+', ' ', description).strip()
-                    
-                    if not description:
-                        continue
-                    
-                    nsn = ""
-                    if mat_idx > -1:
-                        mat_cell = row[mat_idx]
-                        if mat_cell:
-                            match = re.search(r'\b(\d{9})\b', str(mat_cell))
-                            if match:
-                                nsn = match.group(1)
-                    
-                    # Get Quantity (PREFER OH QTY, FALLBACK TO AUTH QTY)
-                    qty = 1
-                    if auth_idx > -1 and auth_idx < len(row):
-                        qty_cell = row[auth_idx]
-                        if qty_cell:
-                            match = re.search(r'(\d+)', str(qty_cell))
-                            if match:
-                                qty = int(match.group(1))
-                    else:
-                        # Try OH QTY
+                        # Dumb Description: Use entire cell
+                        desc_cell = row[desc_idx]
+                        description = get_description_dumb(desc_cell)
+                        
+                        if not description or len(description) < 2:
+                            print(f"DEBUG: Skipping row (Desc too short: '{description}')")
+                            # continue # In Dumb mode, we don't skip to be safe
+                        
+                        # Get NSN
+                        nsn = ""
+                        if mat_idx > -1 and mat_idx < len(row):
+                            mat_cell = row[mat_idx]
+                            if mat_cell:
+                                match = re.search(r'\b(\d{9})\b', str(mat_cell))
+                                if match:
+                                    nsn = match.group(1)
+                        
+                        # Get Quantity (Prefer OH QTY)
                         qty = 1
-                        if auth_idx > -1 and auth_idx < len(row):
-                            pass
+                        if oh_qty_idx > -1 and oh_qty_idx < len(row):
+                            qty_cell = row[oh_qty_idx]
+                            if qty_cell:
+                                try:
+                                    qty = int(str(qty_cell).strip())
+                                except:
+                                    qty = 1
                         elif auth_idx > -1 and auth_idx < len(row):
                             qty_cell = row[auth_idx]
                             if qty_cell:
-                                match = re.search(r'(\d+)', str(qty_cell))
-                                if match:
-                                    qty = int(match.group(1))
-                    
-                    items.append(BomItem(len(items) + 1, description[:100], nsn, qty))
+                                try:
+                                    qty = int(str(qty_cell).strip())
+                                except:
+                                    qty = 1
+                        else:
+                            qty = 1
+                        
+                        print(f"DEBUG: Adding item {len(items) + 1}: '{description[:30]}'")
+                        items.append(BomItem(
+                            line_no=len(items) + 1,
+                            description=description[:100],
+                            nsn=nsn,
+                            qty=qty
+                        ))
+    
+    except Exception as e:
+        print(f"CRITICAL ERROR in extraction: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
     
     return items
 
 
-def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
+def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, start_page: int = 0):
+    """Generate DD1750 with Dumb Mode extraction."""
     items = extract_items_from_pdf(bom_path)
     
+    print(f"\nTotal items extracted: {len(items)}")
+    
+    # Force at least one page if items found, even if extraction is dubious
     if not items:
+        try:
+            reader = PdfReader(template_path)
+            writer = PdfWriter()
+            writer.add_page(reader.pages[0])
+            with open(out_path, 'wb') as f:
+                writer.write(f)
+            print(f"Wrote fallback template to {out_path}")
+        except Exception as e:
+            print(f"ERROR writing fallback: {e}")
         return out_path, 0
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
     writer = PdfWriter()
+    template = PdfReader(template_path)
     
     for page_num in range(total_pages):
         start_idx = page_num * ROWS_PER_PAGE
@@ -168,12 +228,21 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str):
         c.save()
         packet.seek(0)
         
+        # Merge overlay
         overlay = PdfReader(packet)
-        page = PdfReader(template_path).pages[page_num]
+        
+        # Get template page
+        if page_num < len(template.pages):
+            page = template.pages[page_num]
+        else:
+            page = template.pages[0]
+        
         page.merge_page(overlay.pages[0])
         writer.add_page(page)
     
+    # Write to file
     with open(out_path, 'wb') as f:
         writer.write(f)
     
+    print(f"DEBUG: Wrote output to {out_path}")
     return out_path, len(items)
