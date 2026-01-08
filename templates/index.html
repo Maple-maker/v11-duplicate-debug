@@ -2,12 +2,12 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>DD1750 Converter - Final Version</title>
+    <title>DD1750 Converter - Dumb Mode</title>
     <style>
         body { font-family: Arial; max-width: 700px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
         .container { background: white; padding: 30px; border-radius: 10px; }
         h1 { color: #333; margin-bottom: 5px; }
-        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; }
+        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #ccc; }
         button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; font-size: 16px; cursor: pointer; }
@@ -16,7 +16,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>DD1750 Converter - Final Version</h1>
+        <h1>DD1750 Converter - Dumb Mode (Maximally Permissive)</h1>
+        <p style="color: #666; margin-bottom: 15px; font-size: 14px;"><strong>Instructions:</strong> Upload your BOM (epp.pdf) and Template. Click Generate. This version will try to extract EVERYTHING and will NOT skip items even if they look like codes.</p>
         
         {% with messages = get_flashed_messages() %}
             {% if messages %}
