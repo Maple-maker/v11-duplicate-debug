@@ -2,31 +2,40 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>DD1750 Converter</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DD1750 Converter - Robust Version</title>
     <style>
-        body { font-family: Arial; max-width: 700px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
+        body { font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
         .container { background: white; padding: 30px; border-radius: 10px; }
-        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
-        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; }
+        h1 { color: #333; margin-bottom: 5px; }
+        
+        .upload-section { margin-bottom: 20px; padding: 20px; border: 1px solid #ddd; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; font-size: 16px; cursor: pointer; }
+        .error { padding: 15px; background: #ffebee; color: #c62828; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ef9ba8; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>DD1750 Converter</h1>
+        <h1>DD1750 Converter - Robust Version</h1>
+        
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="error">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        
         <form method="POST" action="/generate" enctype="multipart/form-data">
-            <div class="upload">
+            <div class="upload-section">
                 <label>BOM PDF</label>
                 <input type="file" name="bom_file" accept=".pdf" required>
             </div>
-            <div class="upload">
-                <label>DD1750 Template</label>
+            <div class="upload-section">
+                <label>DD1750 Template PDF</label>
                 <input type="file" name="template_file" accept=".pdf" required>
             </div>
-            <div style="margin-bottom: 15px;">
-                <label>Start Page (0-based)</label>
-                <input type="number" name="start_page" value="0" min="0" style="width: 60px;">
-            </div>
-            <button type="submit">Generate</button>
+            <button type="submit">Generate DD1750</button>
         </form>
     </div>
 </body>
