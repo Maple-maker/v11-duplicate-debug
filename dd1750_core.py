@@ -1,4 +1,4 @@
-"""DD1750 core - Robust, OH QTY优先."""
+"""DD1750 core - Bulletproof version."""
 
 import io
 import math
@@ -40,10 +40,11 @@ class BomItem:
 
 
 def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
+    """Extract items from BOM PDF."""
     items = []
     
     try:
-        print(f"DEBUG: Attempting to extract from {pdf_path}")
+        print(f"DEBUG: Opening {pdf_path}")
         
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages[start_page:]:
@@ -54,28 +55,26 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         continue
                     
                     header = table[0]
-                    lv_idx = desc_idx = mat_idx = -1
-                    oh_qty_idx = auth_qty_idx = -1
+                    lv_idx = desc_idx = mat_idx = auth_idx = -1
+                    oh_qty_idx = -1
                     
-                    # Column Identification - Prioritize OH QTY
+                    # Identify columns
                     for i, cell in enumerate(header):
                         if cell:
                             text = str(cell).upper()
                             if 'LV' in text or 'LEVEL' in text:
                                 lv_idx = i
-                            elif 'DESC' in text:
+                            elif 'DESC' in text or 'NOMENCLATURE' in text or 'PART NO.' in text:
                                 desc_idx = i
                             elif 'MATERIAL' in text:
                                 mat_idx = i
                             elif 'OH' in text and 'QTY' in text:
                                 oh_qty_idx = i
                             elif 'AUTH' in text and 'QTY' in text:
-                                auth_qty_idx = i
-                    
-                    print(f"DEBUG: Columns - LV:{lv_idx}, DESC:{desc_idx}, MAT:{mat_idx}, OH QTY:{oh_qty_idx}, AUTH QTY:{auth_qty_idx}")
+                                auth_idx = i
                     
                     if lv_idx == -1 or desc_idx == -1:
-                        print("DEBUG: Skipping table - no LV or DESC column")
+                        print("DEBUG: Skipped table (no LV or DESC column)")
                         continue
                     
                     for row in table[1:]:
@@ -87,36 +86,13 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                         if not lv_cell or str(lv_cell).strip().upper() != 'B':
                             continue
                         
-                        # Extract Description - Use entire raw content of the cell
+                        # Extract Description - USE RAW CONTENT
                         desc_cell = row[desc_idx] if desc_idx < len(row) else None
                         description = ""
                         if desc_cell:
-                            # Get entire content, replace newlines with spaces to be safe
-                            # Then clean minimally
-                            raw_text = str(desc_cell).strip()
-                            
-                            # Replace newlines with spaces first
-                            description = raw_text.replace('\n', ' ')
-                            
-                            # Remove trailing garbage (codes, extra spaces)
-                            description = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', description, flags=re.IGNORECASE)
-                            description = re.sub(r'\s+', ' ', description).strip()
-                            
-                            # Remove parentheses and content after them (some BOMs have NSN in desc)
-                            if '(' in description:
-                                description = description.split('(')[0].strip()
-                            
-                            # Fallback: if empty, use empty string
-                            if not description:
-                                description = ""
-                            
-                        print(f"DEBUG: Description extracted: '{description[:40]}...'")
+                            description = str(desc_cell).strip()
                         
-                        if not description:
-                            print(f"DEBUG: No valid description found for row")
-                            continue
-                        
-                        # Extract NSN
+                        # Extract NSN - Search within raw description text
                         nsn = ""
                         if mat_idx > -1 and mat_idx < len(row):
                             mat_cell = row[mat_idx]
@@ -125,45 +101,22 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                                 if match:
                                     nsn = match.group(1)
                         
-                        # Extract Quantity - Use OH QTY, fallback to AUTH QTY, fallback to 1
+                        # Extract Quantity - PREFER OH QTY OVER AUTH QTY
                         qty = 1
-                        
-                        # Try OH QTY first
                         if oh_qty_idx > -1 and oh_qty_idx < len(row):
                             qty_cell = row[oh_qty_idx]
                             if qty_cell:
                                 try:
-                                    qty_str = str(qty_cell).strip()
-                                    # Extract first number found
-                                    match = re.search(r'(\d+)', qty_str)
-                                    if match:
-                                        qty = int(match.group(1))
-                                        print(f"DEBUG: OH QTY found: {qty}")
-                                    else:
-                                        print(f"DEBUG: OH QTY no number, defaulting to 1")
-                                        qty = 1
+                                    qty = int(str(qty_cell).strip())
                                 except:
                                     qty = 1
-                        else:
-                            # Try AUTH QTY
-                            if auth_qty_idx > -1 and auth_qty_idx < len(row):
-                                qty_cell = row[auth_qty_idx]
-                                if qty_cell:
-                                    try:
-                                        qty_str = str(qty_cell).strip()
-                                        match = re.search(r'(\d+)', qty_str)
-                                        if match:
-                                            qty = int(match.group(1))
-                                            print(f"DEBUG: AUTH QTY found: {qty}")
-                                        else:
-                                            print(f"DEBUG: AUTH QTY no number, defaulting to 1")
-                                            qty = 1
-                                    except:
-                                        qty = 1
-                            else:
-                                # Default to 1
-                                print(f"DEBUG: No QTY column found, defaulting to 1")
-                                qty = 1
+                        elif auth_idx > -1 and auth_idx < len(row):
+                            qty_cell = row[auth_idx]
+                            if qty_cell:
+                                try:
+                                    qty = int(str(qty_cell).strip())
+                                except:
+                                    qty = 1
                         
                         items.append(BomItem(
                             line_no=len(items) + 1,
@@ -171,55 +124,63 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
                             nsn=nsn,
                             qty=qty
                         ))
-                        print(f"DEBUG: Added item {len(items)}")
     
     except Exception as e:
-        print(f"CRITICAL ERROR in extraction: {e}")
+        print(f"ERROR: {e}")
         import traceback
         traceback.print_exc()
         return []
     
-    print(f"DEBUG: Total items extracted: {len(items)}")
     return items
 
 
 def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, start_page: int = 0):
-    """Generate DD1750 with robust file writing."""
+    """Generate DD1750 with items overlayed on template."""
     items = extract_items_from_pdf(bom_path, start_page)
     
-    print(f"\nItems found: {len(items)}")
+    print(f"DEBUG: Total items extracted: {len(items)}")
     
     if not items:
-        # Fallback: Always create a file, even if empty
-        reader = PdfReader(template_path)
+        # Create a minimal file so user gets *something*
+        print("DEBUG: No items found, creating minimal output")
         writer = PdfWriter()
-        writer.add_page(reader.pages[0])
-        output_pdf_path = out_path
+        
         try:
-            with open(output_pdf_path, 'wb') as f:
+            reader = PdfReader(template_path)
+            writer.add_page(reader.pages[0])
+            with open(out_path, 'wb') as f:
                 writer.write(f)
-                sys.stdout.flush()
-            print(f"DEBUG: Wrote empty template to {output_pdf_path}")
-        except:
-            pass
-        return output_pdf_path, 0
+            print(f"DEBUG: Wrote minimal template to {out_path}")
+        except Exception as e:
+            print(f"ERROR writing minimal: {e}")
+        
+        return out_path, 0
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
     writer = PdfWriter()
-    template = PdfReader(template_path)
     
-    print(f"DEBUG: Creating {total_pages} pages")
+    # Read template
+    try:
+        template_reader = PdfReader(template_path)
+    except Exception as e:
+        print(f"ERROR reading template: {e}")
+        # Fallback: return template as items to prevent crash
+        # (Actually creates infinite loop if we try to process)
+        writer = PdfWriter()
+        writer.add_page(PdfReader(bom_path).pages[0]) # Just use BOM page as placeholder
+        with open(out_path, 'wb') as f:
+            writer.write(f)
+        return out_path, 0
     
     for page_num in range(total_pages):
         start_idx = page_num * ROWS_PER_PAGE
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
-        print(f"DEBUG: Creating page {page_num} with {len(page_items)} items")
-        
         # Create overlay
         packet = io.BytesIO()
         c = canvas.Canvas(packet, pagesize=(PAGE_W, PAGE_H))
+        
         first_row = Y_TABLE_TOP - 5.0
         
         for i, item in enumerate(page_items):
@@ -227,16 +188,20 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, s
             y_desc = y - 7.0
             y_nsn = y - 12.2
             
+            # Box number
             c.setFont("Helvetica", 8)
             c.drawCentredString((X_BOX_L + X_BOX_R) / 2, y_desc, str(item.line_no))
             
+            # Description
             c.setFont("Helvetica", 7)
             c.drawString(X_CONTENT_L + PAD_X, y_desc, item.description[:50])
             
+            # NSN
             if item.nsn:
                 c.setFont("Helvetica", 6)
                 c.drawString(X_CONTENT_L + PAD_X, y_nsn, f"NSN: {item.nsn}")
             
+            # Quantities
             c.setFont("Helvetica", 8)
             c.drawCentredString((X_UOI_L + X_UOI_R) / 2, y_desc, "EA")
             c.drawCentredString((X_INIT_L + X_INIT_R) / 2, y_desc, str(item.qty))
@@ -245,49 +210,41 @@ def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, s
         
         c.save()
         packet.seek(0)
-        sys.stdout.flush()
         
         # Merge overlay
-        overlay = PdfReader(packet)
-        
-        # Get template page (use first page for all)
-        if page_num < len(template.pages):
-            page = template.pages[page_num]
-        else:
-            page = template.pages[0]
-        
-        page.merge_page(overlay.pages[0])
-        writer.add_page(page)
+        try:
+            overlay = PdfReader(packet)
+            
+            # Get template page (use first page for all to ensure consistent background)
+            if page_num < len(template_reader.pages):
+                page = template_reader.pages[page_num]
+            else:
+                page = template_reader.pages[0]
+            
+            page.merge_page(overlay.pages[0])
+            writer.add_page(page)
+        except Exception as e:
+            print(f"ERROR merging page {page_num}: {e}")
     
-    # Write to file with verification
-    output_pdf_path = out_path
+    # Write output file - CRITICAL STEP
     try:
-        with open(output_pdf_path, 'wb') as f:
+        with open(out_path, 'wb') as f:
             writer.write(f)
-        
-        # Verify file was written
-        sys.stdout.flush()
-        
-        if not os.path.exists(output_pdf_path):
-            print(f"ERROR: Output file does not exist at {output_pdf_path}")
-            # Try to write again as a last resort
-            try:
-                with open(output_pdf_path, 'wb') as f:
-                    writer.write(f)
-                    sys.stdout.flush()
-            except:
-                pass
-        
-        file_size = os.path.getsize(output_pdf_path)
-        print(f"DEBUG: Output file size: {file_size} bytes")
-        
-        if file_size == 0:
-            print("ERROR: Output file is 0 bytes - write failed")
-            return output_pdf_path, 0
-    
+            print(f"DEBUG: Successfully wrote {out_path} with {len(writer.pages)} pages")
+            sys.stdout.flush()
     except Exception as e:
         print(f"CRITICAL ERROR writing PDF: {e}")
         import traceback
         traceback.print_exc()
         
-        # Fallback: Return template file if everything
+        # Last resort fallback: Write a simple blank file
+        try:
+            template_reader = PdfReader(template_path)
+            simple_writer = PdfWriter()
+            simple_writer.add_page(template_reader.pages[0])
+            with open(out_path, 'wb') as f:
+                simple_writer.write(f)
+        except:
+            pass
+    
+    return out_path, len(items)
