@@ -35,49 +35,43 @@ def generate():
         return render_template('index.html', error='Both files must be PDF format')
     
     try:
+        start_page = int(request.form.get('start_page', 0))
+    except:
         start_page = 0
-        try:
-            start_page = int(request.form.get('start_page', 0))
-        except:
-            pass
-        
+    
+    try:
         with tempfile.TemporaryDirectory() as tmpdir:
             bom_path = os.path.join(tmpdir, 'bom.pdf')
             tpl_path = os.path.join(tmpdir, 'template.pdf')
-            output_path = os.path.join(tmpdir, 'DD1750.pdf')
+            out_path = os.path.join(tmpdir, 'DD1750.pdf')
             
-            print("DEBUG: Saving files...")
             bom_file.save(bom_path)
             template_file.save(tpl_path)
-            sys.stdout.flush()
             
-            print("DEBUG: Generating DD1750...")
+            print(f"DEBUG: Processing BOM: {bom_file.filename}, Template: {template_file.filename}, Output: {out_path}")
+            
             out_path, count = generate_dd1750_from_pdf(
                 bom_pdf_path=bom_path,
                 template_pdf_path=tpl_path,
-                out_pdf_path=output_path,
+                out_pdf_path=out_path,
                 start_page=start_page
             )
             
-            print(f"DEBUG: Generated {count} items")
+            print(f"DEBUG: Generation complete. Count: {count}, Output path: {out_path}")
             
-            if count == 0:
-                return render_template('index.html', error='No items found in BOM')
-            
-            # Check file exists before sending
             if not os.path.exists(out_path):
-                print(f"ERROR: Output file not found at {out_path}")
+                print("ERROR: Output file does not exist!")
                 return render_template('index.html', error='Internal error: PDF could not be generated')
             
             file_size = os.path.getsize(out_path)
-            print(f"DEBUG: Output file size: {file_size}")
-            sys.stdout.flush()
+            print(f"DEBUG: Output file size: {file_size} bytes")
             
             if file_size == 0:
-                print("ERROR: Output file is 0 bytes - write failed")
+                print("ERROR: Output file is 0 bytes!")
                 return render_template('index.html', error='Internal error: Generated PDF is empty')
             
-            print("DEBUG: Sending file to user...")
+            print(f"DEBUG: Sending file to user...")
+            
             return send_file(out_path, as_attachment=True, download_name='DD1750.pdf')
     
     except Exception as e:
