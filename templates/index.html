@@ -2,107 +2,30 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DD1750 Converter - Bulletproof</title>
+    <title>DD1750 Converter</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        body { font-family: Arial; max-width: 700px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
         .container { background: white; padding: 30px; border-radius: 10px; }
-        
         h1 { color: #333; margin-bottom: 5px; }
-        
-        .section { margin-bottom: 20px; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
-        .section h2 { margin-top: 0; color: #1565c0; margin-bottom: 15px; }
-        
-        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
-        .form-group { margin-bottom: 10px; }
-        
-        label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }
-        
-        input[type="text"], input[type="number"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        
-        .upload-box {
-            margin-bottom: 15px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background: #f9f9f9;
-        }
-        
-        input[type="file"] {
-            width: 100%;
-            padding: 10px;
-            border: 2px dashed #ccc;
-            background: #fff;
-            border-radius: 5px;
-        }
-        
-        button {
-            background: #1976d2;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 5px;
-            font-size: 16px;
-            cursor: pointer;
-            width: 100%;
-        }
-        
-        button:hover { background: #1565c0; }
-        
-        .error { padding: 15px; background: #ffebee; color: #c62828; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ef9ba8; }
-        .error-title { font-weight: bold; margin-bottom: 5px; }
-        .error-msg { margin-bottom: 10px; }
+        .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; }
+        label { display: block; margin-bottom: 5px; }
+        input[type="file"] { width: 100%; border: 1px solid #ccc; }
+        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>DD1750 Converter - Bulletproof Version</h1>
-        
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    {% if category == 'error' %}
-                        <div class="error">
-                            <div class="error-title">Error</div>
-                            <div class="error-msg">{{ message }}</div>
-                        </div>
-                    {% endif %}
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
+        <h1>DD1750 Converter</h1>
         <form method="POST" action="/generate" enctype="multipart/form-data">
-            <div class="section">
-                <h2>Upload Files</h2>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>BOM PDF</label>
-                        <div class="upload-box">
-                            <input type="file" name="bom_file" accept=".pdf" required>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>DD1750 Template PDF</label>
-                        <div class="upload-box">
-                            <input type="file" name="template_file" accept=".pdf" required>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>Start Page</label>
-                        <input type="number" name="start_page" value="0" min="0">
-                    </div>
-                </div>
+            <div class="upload">
+                <label>BOM PDF</label>
+                <input type="file" name="bom_file" accept=".pdf" required>
             </div>
-            
-            <button type="submit">Generate DD1750</button>
+            <div class="upload">
+                <label>DD1750 Template PDF</label>
+                <input type="file" name="template_file" accept=".pdf" required>
+            </div>
+            <button type="submit">Generate</button>
         </form>
     </div>
 </body>
