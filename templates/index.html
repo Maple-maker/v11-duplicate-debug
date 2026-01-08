@@ -2,21 +2,28 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>DD1750 Converter - Fixed</title>
+    <title>DD1750 Converter - Final Version</title>
     <style>
         body { font-family: Arial; max-width: 700px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
         .container { background: white; padding: 30px; border-radius: 10px; }
         h1 { color: #333; margin-bottom: 5px; }
         .upload { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; }
-        label { display: block; margin-bottom: 5px; }
-        input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ccc; }
-        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; }
-        .error { padding: 15px; background: #ffebee; color: #c62828; border-radius: 5px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="file"] { width: 100%; padding: 10px; border: 1px dashed #ccc; }
+        button { background: #1976d2; color: white; border: none; padding: 12px 25px; border-radius: 5px; font-size: 16px; cursor: pointer; }
+        .error { padding: 15px; background: #ffebee; color: #c62828; border-radius: 5px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>DD1750 Converter</h1>
+        <h1>DD1750 Converter - Final Version</h1>
+        
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="error">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        
         <form method="POST" action="/generate" enctype="multipart/form-data">
             <div class="upload">
                 <label>BOM PDF</label>
@@ -26,7 +33,7 @@
                 <label>DD1750 Template PDF</label>
                 <input type="file" name="template_file" accept=".pdf" required>
             </div>
-            <button type="submit">Generate DD1750</button>
+            <button type="submit">Generate</button>
         </form>
     </div>
 </body>
