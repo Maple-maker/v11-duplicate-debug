@@ -1,248 +1,881 @@
-"""DD1750 core - Dumb Mode (Maximally Permissive)."""
+"""
+DD1750 Core - Packing List Generator from BOM PDFs
+
+This module extracts items from GCSS-Army Component Listing / Hand Receipt PDFs
+and generates DD Form 1750 Packing Lists.
+
+Supported BOM formats:
+1. Standard GCSS-Army Component Listing with LV column (e.g., B49.pdf)
+2. Equipment Property Record format (epp.pdf style)
+
+Note: Handwritten BOMs are NOT supported. Users should obtain clean digital
+BOMs from GCSS-Army through their supply teams.
+"""
 
 import io
 import math
 import re
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, Dict, Any
+from enum import Enum
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
 from reportlab.lib.pagesizes import letter
 
 
-PAGE_W, PAGE_H = letter
-
-# Column positions
-X_BOX_L, X_BOX_R = 44.0, 88.0
-X_CONTENT_L, X_CONTENT_R = 88.0, 365.0
-X_UOI_L, X_UOI_R = 365.0, 408.5
-X_INIT_L, X_INIT_R = 408.5, 453.5
-X_SPARES_L, X_SPARES_R = 453.5, 514.5
-X_TOTAL_L, X_TOTAL_R = 514.5, 566.0
-
-Y_TABLE_TOP = 616.0
-Y_TABLE_BOTTOM = 89.5
+# DD1750 Form Layout Constants (Letter size: 612 x 792 points)
+# These measurements are from the official DD FORM 1750, SEP 70 (EG)
 ROWS_PER_PAGE = 18
-ROW_H = (Y_TABLE_TOP - Y_TABLE_BOTTOM) / ROWS_PER_PAGE
-PAD_X = 3.0
+PAGE_W, PAGE_H = 612.0, 792.0
+
+# Column boundaries (x coordinates in points from left edge)
+# Derived from official template analysis
+X_BOX_L, X_BOX_R = 45.0, 88.2           # Box Number column
+X_CONTENT_L, X_CONTENT_R = 88.2, 365.4  # Contents (Stock # and Nomenclature)
+X_UOI_L, X_UOI_R = 365.4, 408.6         # Unit of Issue
+X_INIT_L, X_INIT_R = 408.6, 453.6       # Initial Operation
+X_SPARES_L, X_SPARES_R = 453.6, 514.8   # Running Spares
+X_TOTAL_L, X_TOTAL_R = 514.8, 567.0     # Total
+
+# Row layout (PDF coordinates: 0 at bottom)
+Y_TABLE_TOP = 616.0      # Top of table content area
+Y_TABLE_BOTTOM = 89.1    # Bottom of table content area
+ROW_H = (Y_TABLE_TOP - Y_TABLE_BOTTOM) / ROWS_PER_PAGE  # ~29.27 points
+PAD_X = 3.0  # Horizontal padding from column edge
+
+
+class BomFormat(Enum):
+    """Enumeration of supported BOM formats."""
+    GCSS_ARMY_STANDARD = "gcss_army_standard"  # Has LV column, standard Component Listing
+    EPP_FORMAT = "epp_format"                   # Equipment Property Record format
+    UNKNOWN = "unknown"
 
 
 @dataclass
 class BomItem:
+    """Represents a single item from a Bill of Materials."""
     line_no: int
     description: str
-    nsn: str
-    qty: int
+    nsn: str = ""           # National Stock Number (9-digit NIIN)
+    qty: int = 1            # Authorized quantity
+    unit_of_issue: str = "EA"
+    material_number: str = ""  # Full material/part number
+    
+    # For user review/editing
+    is_editable: bool = True
+    original_description: str = ""
+    
+    def __post_init__(self):
+        if not self.original_description:
+            self.original_description = self.description
 
 
-def get_description_dumb(desc_cell) -> str:
-    """Maximally permissive description extraction."""
-    if not desc_cell:
+@dataclass
+class HeaderInfo:
+    """Header information for DD1750 form."""
+    packed_by: str = ""
+    num_boxes: str = "1"
+    requisition_no: str = ""
+    order_no: str = ""
+    end_item: str = ""
+    date: str = ""
+    # Page numbers are auto-calculated
+
+
+@dataclass
+class BomMetadata:
+    """Metadata extracted from BOM header."""
+    end_item_niin: str = ""
+    end_item_description: str = ""
+    lin: str = ""
+    pub_num: str = ""
+    pub_date: str = ""
+    serial_equip_no: str = ""
+    uic: str = ""
+    fe: str = ""
+    bom_format: BomFormat = BomFormat.UNKNOWN
+
+
+@dataclass
+class ExtractionResult:
+    """Result of BOM extraction including items and metadata."""
+    items: List[BomItem] = field(default_factory=list)
+    metadata: BomMetadata = field(default_factory=BomMetadata)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+    pages_processed: int = 0
+    format_detected: BomFormat = BomFormat.UNKNOWN
+
+
+def detect_bom_format(tables: List[List[List[str]]], page_text: str) -> BomFormat:
+    """
+    Detect the format of the BOM based on table structure and page content.
+    
+    Args:
+        tables: Extracted tables from the page
+        page_text: Full text content of the page
+        
+    Returns:
+        Detected BomFormat enum value
+    """
+    # Check for GCSS-Army standard format markers
+    if "COMPONENT LISTING" in page_text.upper() or "HAND RECEIPT" in page_text.upper():
+        # Look for LV column in headers
+        for table in tables:
+            if table and len(table) > 0:
+                header = table[0]
+                header_text = ' '.join(str(cell or '') for cell in header).upper()
+                if 'LV' in header_text or 'LEVEL' in header_text:
+                    return BomFormat.GCSS_ARMY_STANDARD
+        
+        # Even without LV column, if it has the standard structure
+        if "AUTH" in page_text.upper() and "QTY" in page_text.upper():
+            return BomFormat.GCSS_ARMY_STANDARD
+    
+    # Check for EPP format markers
+    if "PWR PLANT" in page_text.upper() or "OPERATIONAL SUPPORT" in page_text.upper():
+        return BomFormat.EPP_FORMAT
+    
+    # Default to standard format if we see Material and Description columns
+    for table in tables:
+        if table and len(table) > 0:
+            header = table[0]
+            header_text = ' '.join(str(cell or '') for cell in header).upper()
+            if 'MATERIAL' in header_text and 'DESCRIPTION' in header_text:
+                return BomFormat.GCSS_ARMY_STANDARD
+    
+    return BomFormat.UNKNOWN
+
+
+def find_column_indices(header: List[str]) -> Dict[str, Optional[int]]:
+    """
+    Find column indices from header row.
+    
+    Args:
+        header: List of header cell values
+        
+    Returns:
+        Dictionary mapping column names to their indices
+    """
+    indices = {
+        'lv': None,
+        'description': None,
+        'material': None,
+        'auth_qty': None,    # Authorized Quantity - THIS IS WHAT WE USE
+        'oh_qty': None,      # On-Hand Quantity (last column, often handwritten)
+        'ui': None,
+        'image': None,
+    }
+    
+    for i, cell in enumerate(header):
+        if not cell:
+            continue
+        text = str(cell).upper().strip()
+        # Also check for multi-line headers
+        text_joined = text.replace('\n', ' ')
+        
+        # Level column
+        if text in ('LV', 'LEVEL') or 'LV' in text.split():
+            indices['lv'] = i
+        # Description column
+        elif 'DESC' in text:
+            indices['description'] = i
+        # Material column
+        elif 'MATERIAL' in text or text == 'MAT':
+            indices['material'] = i
+        # Authorized quantity - check for "AUTH" and "QTY" together
+        elif ('AUTH' in text_joined and 'QTY' in text_joined) or text_joined == 'AUTH QTY':
+            indices['auth_qty'] = i
+        # On-Hand quantity (rightmost qty column)
+        elif ('OH' in text_joined and 'QTY' in text_joined) or text_joined == 'OH QTY':
+            indices['oh_qty'] = i
+        # Unit of Issue
+        elif text == 'UI' or text == 'UNIT':
+            indices['ui'] = i
+        # Image column (usually first)
+        elif 'IMAGE' in text or text == 'IMG':
+            indices['image'] = i
+    
+    # Debug output
+    print(f"Column indices found: {indices}")
+    
+    return indices
+
+
+def extract_nsn_from_material(material_text: str) -> str:
+    """
+    Extract 9-digit NIIN from material/part number field.
+    
+    Handles various formats found in GCSS-Army BOMs:
+    - Direct 9-digit NIIN: 002643796
+    - With line breaks: 002643796\nC_19207 ~ 11655778-5
+    - Full NSN format: 6545-00-922-1200
+    - Material number with NIIN: C_89875 ~ 6545-00-922-1200
+    
+    Args:
+        material_text: Text from material column
+        
+    Returns:
+        9-digit NIIN string or empty string if not found
+    """
+    if not material_text:
         return ""
     
-    text = str(desc_cell).strip()
+    text = str(material_text).strip()
     
-    # Strategy 1: Split by newline, pick line 1 (Standard for BCP)
+    # First, look for 9-digit number at the start of a line or the text
+    # This handles the common format where NIIN is on first line
     lines = text.split('\n')
-    if len(lines) >= 2:
-        description = lines[1].strip()
-    else:
-        # Strategy 2: Fallback to raw text (for EPP/EPP styles)
-        description = lines[0].strip() if lines else text
+    for line in lines:
+        line = line.strip()
+        # Check if line starts with 9 digits
+        match = re.match(r'^(\d{9})\b', line)
+        if match:
+            return match.group(1)
     
-    # Cleanup parentheses (remove everything after first '(')
+    # Look for any 9-digit number in the text
+    match = re.search(r'\b(\d{9})\b', text)
+    if match:
+        return match.group(1)
+    
+    # Look for full NSN format (XXXX-XX-XXX-XXXX) and extract NIIN portion
+    nsn_match = re.search(r'\b(\d{4})-(\d{2})-(\d{3})-(\d{4})\b', text)
+    if nsn_match:
+        # NIIN is the last 9 digits: FSC-NIIN format
+        # Return digits 3-4 (2 chars) + digits 5-7 (3 chars) + digits 8-11 (4 chars)
+        return nsn_match.group(2) + nsn_match.group(3) + nsn_match.group(4)
+    
+    return ""
+
+
+def clean_description(desc_text: str) -> str:
+    """
+    Clean and normalize description text.
+    
+    Args:
+        desc_text: Raw description text
+        
+    Returns:
+        Cleaned description string
+    """
+    if not desc_text:
+        return ""
+    
+    lines = str(desc_text).strip().split('\n')
+    
+    # Often the second line is the actual description
+    description = lines[1].strip() if len(lines) >= 2 else lines[0].strip()
+    
+    # Remove parenthetical content (often contains codes)
     if '(' in description:
         description = description.split('(')[0].strip()
     
-    # Cleanup trailing codes
-    description = re.sub(r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G)$', '', description, flags=re.IGNORECASE)
+    # Remove trailing codes that sometimes appear
+    codes_pattern = r'\s+(WTY|ARC|CIIC|UI|SCMC|EA|AY|9K|9G|9B|9T|2B|2E|2W|2T|85|7K|7B)$'
+    description = re.sub(codes_pattern, '', description, flags=re.IGNORECASE)
+    
+    # Normalize whitespace
     description = re.sub(r'\s+', ' ', description).strip()
     
-    # Filter: Ensure not empty after cleanup
-    if not description or len(description) < 2:
-        # Strategy 3: Last Resort - Use entire raw text
-        description = text.replace('\n', ' ').replace('\r', ' ')
+    return description
+
+
+def extract_quantity(qty_cell: Any) -> int:
+    """
+    Extract numeric quantity from cell value.
     
-    return description[:100]
+    Args:
+        qty_cell: Cell value (may be string, int, or None)
+        
+    Returns:
+        Integer quantity (defaults to 1 if extraction fails)
+    """
+    if not qty_cell:
+        return 1
+    
+    qty_str = str(qty_cell).strip()
+    
+    # Find first number in the string
+    match = re.search(r'(\d+)', qty_str)
+    if match:
+        return int(match.group(1))
+    
+    return 1
 
 
-def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> List[BomItem]:
-    """Extract items - Dumb Mode."""
+def extract_items_gcss_standard(tables: List[List[List[str]]]) -> List[BomItem]:
+    """
+    Extract items from GCSS-Army standard format BOM.
+    
+    Standard format has:
+    - Image, Material, LV, Description, WTY, ARC, CIIC, UI, SCMC, Auth Qty, OH Qty
+    - Items with LV="B" are components to extract
+    - LV="A" items are category headers
+    - Uses Auth Qty column for quantities
+    - Always uses EA for unit of issue
+    
+    Args:
+        tables: List of tables extracted from PDF
+        
+    Returns:
+        List of BomItem objects
+    """
     items = []
     
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages[start_page:]:
-                tables = page.extract_tables()
+    for table in tables:
+        if not table or len(table) < 2:
+            continue
+        
+        header = table[0]
+        indices = find_column_indices(header)
+        
+        print(f"Header row: {header}")
+        
+        # Need at least description column
+        if indices['description'] is None:
+            # Try to find description column by looking at header content
+            for i, cell in enumerate(header):
+                if cell:
+                    text = str(cell).upper()
+                    if 'DESC' in text:
+                        indices['description'] = i
+                        break
+        
+        if indices['description'] is None:
+            print("No description column found, skipping table")
+            continue
+        
+        for row_num, row in enumerate(table[1:]):
+            # Skip empty rows
+            if not any(cell for cell in row if cell):
+                continue
+            
+            # Check if this is a "B" level item (component)
+            if indices['lv'] is not None:
+                lv_cell = row[indices['lv']] if indices['lv'] < len(row) else None
+                if not lv_cell:
+                    continue
+                lv_value = str(lv_cell).strip().upper()
+                if lv_value != 'B':
+                    # Skip A-level (category headers) and other non-B items
+                    continue
+            
+            # Extract description - ALWAYS use the FIRST LINE
+            # The first line contains the clean nomenclature (e.g., "CHAIN ASSEMBLY,SINGLE LEG")
+            # Lower lines may have additional details but can be truncated/fragmented
+            desc_cell = row[indices['description']] if indices['description'] < len(row) else None
+            description = ""
+            if desc_cell:
+                lines = str(desc_cell).strip().split('\n')
+                # Use the first non-empty line
+                for line in lines:
+                    line = line.strip()
+                    if line and len(line) >= 3:
+                        description = line
+                        break
                 
-                for table in tables:
-                    if len(table) < 2:
-                        continue
-                    
-                    header = table[0]
-                    lv_idx = desc_idx = mat_idx = auth_idx = -1
-                    oh_qty_idx = -1
-                    
-                    # Identify columns
-                    for i, cell in enumerate(header):
-                        if cell:
-                            text = str(cell).upper()
-                            if 'LV' in text or 'LEVEL' in text:
-                                lv_idx = i
-                            elif 'DESC' in text or 'NOMENCLATURE' in text or 'PART NO.' in text:
-                                desc_idx = i
-                            elif 'MATERIAL' in text:
-                                mat_idx = i
-                            elif 'AUTH' in text and 'QTY' in text:
-                                auth_idx = i
-                            elif 'OH' in text and 'QTY' in text:
-                                oh_qty_idx = i
-                    
-                    print(f"DEBUG: Table Columns - LV:{lv_idx}, DESC:{desc_idx}, MAT:{mat_idx}, AUTH:{auth_idx}, OH QTY:{oh_qty_idx}")
-                    
-                    if lv_idx == -1 or desc_idx == -1:
-                        print("DEBUG: Skipping table (no LV or DESC column)")
-                        continue
-                    
-                    for row in table[1:]:
-                        # Dumb Mode: Don't skip empty rows (just check level)
-                        
-                        lv_cell = row[lv_idx] if lv_idx < len(row) else None
-                        if not lv_cell:
-                            continue
-                            
-                        # Relaxed check for Level (Accept B, B9, etc.)
-                        lv_text = str(lv_cell).strip()
-                        if not ('B' in lv_text.upper() or lv_text.startswith('B')):
-                            print(f"DEBUG: Skipping row (LV: '{lv_text}')")
-                            continue
-                        
-                        # Dumb Description: Use entire cell
-                        desc_cell = row[desc_idx]
-                        description = get_description_dumb(desc_cell)
-                        
-                        if not description or len(description) < 2:
-                            print(f"DEBUG: Skipping row (Desc too short: '{description}')")
-                            # continue # In Dumb mode, we don't skip to be safe
-                        
-                        # Get NSN
-                        nsn = ""
-                        if mat_idx > -1 and mat_idx < len(row):
-                            mat_cell = row[mat_idx]
-                            if mat_cell:
-                                match = re.search(r'\b(\d{9})\b', str(mat_cell))
-                                if match:
-                                    nsn = match.group(1)
-                        
-                        # Get Quantity (Prefer OH QTY)
-                        qty = 1
-                        if oh_qty_idx > -1 and oh_qty_idx < len(row):
-                            qty_cell = row[oh_qty_idx]
-                            if qty_cell:
-                                try:
-                                    qty = int(str(qty_cell).strip())
-                                except:
-                                    qty = 1
-                        elif auth_idx > -1 and auth_idx < len(row):
-                            qty_cell = row[auth_idx]
-                            if qty_cell:
-                                try:
-                                    qty = int(str(qty_cell).strip())
-                                except:
-                                    qty = 1
-                        else:
-                            qty = 1
-                        
-                        print(f"DEBUG: Adding item {len(items) + 1}: '{description[:30]}'")
-                        items.append(BomItem(
-                            line_no=len(items) + 1,
-                            description=description[:100],
-                            nsn=nsn,
-                            qty=qty
-                        ))
-    
-    except Exception as e:
-        print(f"CRITICAL ERROR in extraction: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+                # Clean up
+                description = re.sub(r'\s+', ' ', description).strip()  # Normalize whitespace
+                description = re.sub(r'[/\\]+\s*$', '', description)    # Remove trailing slashes
+            
+            if not description or len(description) < 3:
+                continue
+            
+            # Skip category descriptions
+            skip_patterns = [
+                'COMPONENT OF END ITEM', 'BASIC ISSUE ITEMS', 
+                'COEI-', 'BII-', 'OPERATIONAL SUPPORT'
+            ]
+            if any(pat in description.upper() for pat in skip_patterns):
+                continue
+            
+            # Extract NSN from material column
+            nsn = ""
+            if indices['material'] is not None and indices['material'] < len(row):
+                mat_cell = row[indices['material']]
+                nsn = extract_nsn_from_material(mat_cell)
+            
+            # Extract quantity from Auth Qty column
+            qty = 1  # Default
+            if indices['auth_qty'] is not None and indices['auth_qty'] < len(row):
+                qty_cell = row[indices['auth_qty']]
+                if qty_cell:
+                    qty = extract_quantity(qty_cell)
+                    print(f"  Auth Qty cell: '{qty_cell}' -> {qty}")
+            
+            print(f"Extracted item: {description[:40]}... | NSN: {nsn} | Qty: {qty}")
+            
+            # Always use EA for unit of issue
+            items.append(BomItem(
+                line_no=len(items) + 1,
+                description=description[:100],  # Limit length
+                nsn=nsn,
+                qty=qty,
+                unit_of_issue="EA"  # Always EA
+            ))
     
     return items
 
 
-def generate_dd1750_from_pdf(bom_path: str, template_path: str, out_path: str, start_page: int = 0):
-    """Generate DD1750 with Dumb Mode extraction."""
-    items = extract_items_from_pdf(bom_path)
+def extract_items_epp_format(tables: List[List[List[str]]], page_text: str) -> List[BomItem]:
+    """
+    Extract items from EPP (Equipment Property Record) format BOM.
     
-    print(f"\nTotal items extracted: {len(items)}")
+    EPP format typically has:
+    - Material column with NIIN/part numbers
+    - Description column
+    - Auth Qty column
+    - OH Qty column (THIS IS WHAT WE USE)
+    - May not have LV column
     
-    # Force at least one page if items found, even if extraction is dubious
+    Uses OH Qty for quantities, always uses EA for unit of issue.
+    Skips items with 0 quantity.
+    
+    Args:
+        tables: List of tables extracted from PDF
+        page_text: Full page text for fallback parsing
+        
+    Returns:
+        List of BomItem objects
+    """
+    items = []
+    
+    for table in tables:
+        if not table or len(table) < 2:
+            continue
+        
+        header = table[0]
+        indices = find_column_indices(header)
+        
+        # EPP format detection: has Material and Description but may not have LV
+        has_material = indices['material'] is not None
+        has_description = indices['description'] is not None
+        has_lv = indices['lv'] is not None
+        
+        # If no standard columns found, try to detect by content
+        if not has_description:
+            # Try to find columns by position/content
+            for i, cell in enumerate(header):
+                if not cell:
+                    continue
+                text = str(cell).upper()
+                # Sometimes Description is just "DESCRIPTION" or contains it
+                if 'DESCR' in text or text == 'DESC':
+                    indices['description'] = i
+                    has_description = True
+        
+        if not has_description:
+            continue
+        
+        for row in table[1:]:
+            if not any(cell for cell in row if cell):
+                continue
+            
+            # If LV column exists, check for 'B' level items
+            # But EPP format often doesn't have LV column
+            if has_lv and indices['lv'] is not None:
+                lv_cell = row[indices['lv']] if indices['lv'] < len(row) else None
+                if lv_cell and str(lv_cell).strip().upper() == 'A':
+                    # Skip category headers (A level)
+                    continue
+            
+            # Extract description
+            desc_cell = row[indices['description']] if indices['description'] < len(row) else None
+            description = clean_description(desc_cell)
+            
+            if not description:
+                continue
+            
+            # Skip obvious header/category rows
+            if description.upper() in ('COMPONENT OF END ITEM', 'BASIC ISSUE ITEMS', 
+                                        'OPERATIONAL SUPPORT', 'COEI', 'BII'):
+                continue
+            
+            # Extract NSN from material column
+            nsn = ""
+            if indices['material'] is not None and indices['material'] < len(row):
+                nsn = extract_nsn_from_material(row[indices['material']])
+            
+            # Extract quantity from Auth Qty column
+            qty = 1
+            if indices['auth_qty'] is not None and indices['auth_qty'] < len(row):
+                qty = extract_quantity(row[indices['auth_qty']])
+            
+            # Always use EA for unit of issue
+            items.append(BomItem(
+                line_no=len(items) + 1,
+                description=description[:100],
+                nsn=nsn,
+                qty=qty,
+                unit_of_issue="EA"
+            ))
+    
+    return items
+
+
+def extract_metadata(page_text: str) -> BomMetadata:
+    """
+    Extract metadata from BOM header text.
+    
+    Args:
+        page_text: Full text content of the first page
+        
+    Returns:
+        BomMetadata object with extracted values
+    """
+    metadata = BomMetadata()
+    
+    # END ITEM NIIN
+    match = re.search(r'END\s*ITEM\s*NIIN[:\s]*(\d{9})', page_text, re.IGNORECASE)
+    if match:
+        metadata.end_item_niin = match.group(1)
+    
+    # LIN
+    match = re.search(r'LIN[:\s]*([A-Z0-9]+)', page_text, re.IGNORECASE)
+    if match:
+        metadata.lin = match.group(1)
+    
+    # Description (after DESC:)
+    match = re.search(r'DESC[:\s]*([A-Z0-9\s/\-]+)', page_text, re.IGNORECASE)
+    if match:
+        metadata.end_item_description = match.group(1).strip()[:50]
+    
+    # Serial/Equipment Number
+    match = re.search(r'SER/EQUIP\s*NO[:\s]*([A-Z0-9]+)', page_text, re.IGNORECASE)
+    if match:
+        metadata.serial_equip_no = match.group(1)
+    
+    # UIC
+    match = re.search(r'UIC[:\s]*([A-Z0-9]+)', page_text, re.IGNORECASE)
+    if match:
+        metadata.uic = match.group(1)
+    
+    # FE
+    match = re.search(r'FE[:\s]*(\d+)', page_text, re.IGNORECASE)
+    if match:
+        metadata.fe = match.group(1)
+    
+    return metadata
+
+
+def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> ExtractionResult:
+    """
+    Extract BOM items from a PDF file.
+    
+    Supports multiple BOM formats from GCSS-Army:
+    - Standard Component Listing / Hand Receipt with LV column
+    - EPP format
+    
+    Args:
+        pdf_path: Path to the BOM PDF file
+        start_page: Page number to start extraction (0-based)
+        
+    Returns:
+        ExtractionResult containing items, metadata, and any warnings/errors
+    """
+    result = ExtractionResult()
+    
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if start_page >= len(pdf.pages):
+                result.errors.append(f"Start page {start_page} exceeds document length ({len(pdf.pages)} pages)")
+                return result
+            
+            # Get first page text for metadata and format detection
+            first_page = pdf.pages[start_page]
+            first_page_text = first_page.extract_text() or ""
+            first_page_tables = first_page.extract_tables()
+            
+            # Detect format
+            result.format_detected = detect_bom_format(first_page_tables, first_page_text)
+            result.metadata = extract_metadata(first_page_text)
+            result.metadata.bom_format = result.format_detected
+            
+            # Extract items from all pages
+            all_items = []
+            for page_num, page in enumerate(pdf.pages[start_page:], start=start_page):
+                result.pages_processed += 1
+                tables = page.extract_tables()
+                page_text = page.extract_text() or ""
+                
+                if result.format_detected == BomFormat.GCSS_ARMY_STANDARD:
+                    page_items = extract_items_gcss_standard(tables)
+                elif result.format_detected == BomFormat.EPP_FORMAT:
+                    page_items = extract_items_epp_format(tables, page_text)
+                else:
+                    # Try standard format as fallback
+                    page_items = extract_items_gcss_standard(tables)
+                    if not page_items:
+                        page_items = extract_items_epp_format(tables, page_text)
+                
+                all_items.extend(page_items)
+            
+            # Renumber items
+            for i, item in enumerate(all_items):
+                item.line_no = i + 1
+            
+            result.items = all_items
+            
+            if not result.items:
+                result.warnings.append("No items extracted. Ensure the PDF is a GCSS-Army BOM format.")
+            
+    except Exception as e:
+        result.errors.append(f"Failed to process PDF: {str(e)}")
+    
+    return result
+
+
+def generate_dd1750_overlay(
+    items: List[BomItem], 
+    page_num: int, 
+    total_pages: int,
+    header: Optional[HeaderInfo] = None
+) -> io.BytesIO:
+    """
+    Generate a PDF overlay with item data for a single DD1750 page.
+    
+    Fills in:
+    - Page numbers (automatically calculated)
+    - Table items
+    
+    Form fields are added separately after the merge in generate_dd1750_from_items.
+    
+    Args:
+        items: List of items for this page (max 18)
+        page_num: Current page number (1-based)
+        total_pages: Total number of pages
+        header: Optional header information (not used - kept for API compatibility)
+        
+    Returns:
+        BytesIO buffer containing the overlay PDF
+    """
+    packet = io.BytesIO()
+    can = canvas.Canvas(packet, pagesize=(PAGE_W, PAGE_H))
+    
+    # === HEADER FIELDS ===
+    # PAGE NUMBERS - Always fill these in as static text
+    can.setFont("Helvetica", 10)
+    can.drawCentredString(472, PAGE_H - 132, str(page_num))      # Current page
+    can.drawCentredString(520, PAGE_H - 132, str(total_pages))   # Total pages
+    
+    # === TABLE CONTENT ===
+    for i, item in enumerate(items):
+        # Calculate Y position for this row (rows go top to bottom)
+        row_top = Y_TABLE_TOP - (i * ROW_H)
+        y_line1 = row_top - 10.0    # First line (description)
+        y_line2 = row_top - 20.0    # Second line (NSN)
+        
+        # Line number in Box column (centered)
+        can.setFont("Helvetica", 9)
+        box_center_x = (X_BOX_L + X_BOX_R) / 2
+        can.drawCentredString(box_center_x, y_line1, str(item.line_no))
+        
+        # Description (left-aligned with padding)
+        can.setFont("Helvetica", 8)
+        desc = item.description[:55] if len(item.description) > 55 else item.description
+        can.drawString(X_CONTENT_L + PAD_X, y_line1, desc)
+        
+        # NSN on second line if present
+        if item.nsn:
+            can.setFont("Helvetica", 7)
+            can.drawString(X_CONTENT_L + PAD_X, y_line2, f"NSN: {item.nsn}")
+        
+        # Unit of Issue (centered) - Always EA
+        can.setFont("Helvetica", 9)
+        uoi_center_x = (X_UOI_L + X_UOI_R) / 2
+        can.drawCentredString(uoi_center_x, y_line1, "EA")
+        
+        # Initial Operation quantity (centered)
+        init_center_x = (X_INIT_L + X_INIT_R) / 2
+        can.drawCentredString(init_center_x, y_line1, str(item.qty))
+        
+        # Running Spares (centered) - always 0
+        spares_center_x = (X_SPARES_L + X_SPARES_R) / 2
+        can.drawCentredString(spares_center_x, y_line1, "0")
+        
+        # Total (centered)
+        total_center_x = (X_TOTAL_L + X_TOTAL_R) / 2
+        can.drawCentredString(total_center_x, y_line1, str(item.qty))
+    
+    can.save()
+    packet.seek(0)
+    return packet
+
+
+def generate_dd1750_from_items(
+    items: List[BomItem],
+    template_path: str,
+    output_path: str,
+    header: Optional[HeaderInfo] = None
+) -> Tuple[str, int]:
+    """
+    Generate DD1750 PDF from a list of items.
+    
+    Args:
+        items: List of BomItem objects
+        template_path: Path to blank DD1750 template PDF
+        output_path: Path for output PDF
+        header: Optional header information (packed by, date, etc.)
+        
+    Returns:
+        Tuple of (output_path, item_count)
+    """
+    from pypdf.generic import (
+        DictionaryObject, ArrayObject, NameObject, 
+        TextStringObject, NumberObject, FloatObject
+    )
+    from pypdf.annotations import FreeText
+    
     if not items:
-        try:
-            reader = PdfReader(template_path)
-            writer = PdfWriter()
-            writer.add_page(reader.pages[0])
-            with open(out_path, 'wb') as f:
-                writer.write(f)
-            print(f"Wrote fallback template to {out_path}")
-        except Exception as e:
-            print(f"ERROR writing fallback: {e}")
-        return out_path, 0
+        # Return blank template if no items
+        reader = PdfReader(template_path)
+        writer = PdfWriter()
+        writer.add_page(reader.pages[0])
+        with open(output_path, 'wb') as f:
+            writer.write(f)
+        return output_path, 0
     
     total_pages = math.ceil(len(items) / ROWS_PER_PAGE)
     writer = PdfWriter()
-    template = PdfReader(template_path)
     
     for page_num in range(total_pages):
         start_idx = page_num * ROWS_PER_PAGE
         end_idx = min((page_num + 1) * ROWS_PER_PAGE, len(items))
         page_items = items[start_idx:end_idx]
         
-        # Create overlay
-        packet = io.BytesIO()
-        c = canvas.Canvas(packet, pagesize=letter)
-        first_row = Y_TABLE_TOP - 5.0
+        # Generate overlay with header info
+        overlay_buffer = generate_dd1750_overlay(
+            page_items, 
+            page_num + 1, 
+            total_pages,
+            header
+        )
+        overlay = PdfReader(overlay_buffer)
         
-        for i, item in enumerate(page_items):
-            y = first_row - (i * ROW_H)
-            
-            c.setFont("Helvetica", 8)
-            c.drawCentredString(66, y - 7, str(item.line_no))
-            
-            c.setFont("Helvetica", 7)
-            c.drawString(92, y - 7, item.description[:50])
-            
-            if item.nsn:
-                c.setFont("Helvetica", 6)
-                c.drawString(92, y - 12, f"NSN: {item.nsn}")
-            
-            c.setFont("Helvetica", 8)
-            c.drawCentredString(386, y - 7, "EA")
-            c.drawCentredString(431, y - 7, str(item.qty))
-            c.drawCentredString(484, y - 7, "0")
-            c.drawCentredString(540, y - 7, str(item.qty))
-        
-        c.save()
-        packet.seek(0)
-        
-        # Merge overlay
-        overlay = PdfReader(packet)
-        
-        # Get template page
-        if page_num < len(template.pages):
-            page = template.pages[page_num]
-        else:
-            page = template.pages[0]
-        
-        page.merge_page(overlay.pages[0])
-        writer.add_page(page)
+        # Merge with template
+        template_page = PdfReader(template_path).pages[0]
+        template_page.merge_page(overlay.pages[0])
+        writer.add_page(template_page)
     
-    # Write to file
-    with open(out_path, 'wb') as f:
+    # Add fillable form fields to the first page
+    # Define form field positions (x, y, width, height) based on DD1750 layout
+    form_fields = [
+        {'name': 'packed_by', 'rect': (92, 732, 230, 746), 'tooltip': 'Packed By'},
+        {'name': 'no_boxes', 'rect': (282, 732, 332, 746), 'tooltip': 'Number of Boxes'},
+        {'name': 'req_no', 'rect': (405, 732, 566, 746), 'tooltip': 'Requisition Number'},
+        {'name': 'order_no', 'rect': (405, 712, 566, 726), 'tooltip': 'Order Number'},
+        {'name': 'end_item', 'rect': (92, 689, 370, 703), 'tooltip': 'End Item'},
+        {'name': 'date', 'rect': (447, 689, 566, 703), 'tooltip': 'Date'},
+        {'name': 'typed_name', 'rect': (92, 46, 290, 60), 'tooltip': 'Typed Name and Title'},
+    ]
+    
+    # Create AcroForm for the document
+    writer._root_object[NameObject("/AcroForm")] = DictionaryObject({
+        NameObject("/Fields"): ArrayObject([]),
+        NameObject("/NeedAppearances"): NameObject("/true")
+    })
+    
+    # Add text fields to first page
+    page = writer.pages[0]
+    
+    for field_def in form_fields:
+        # Create text field annotation
+        field = DictionaryObject({
+            NameObject("/Type"): NameObject("/Annot"),
+            NameObject("/Subtype"): NameObject("/Widget"),
+            NameObject("/FT"): NameObject("/Tx"),  # Text field
+            NameObject("/T"): TextStringObject(field_def['name']),
+            NameObject("/Rect"): ArrayObject([
+                FloatObject(field_def['rect'][0]),
+                FloatObject(field_def['rect'][1]),
+                FloatObject(field_def['rect'][2]),
+                FloatObject(field_def['rect'][3])
+            ]),
+            NameObject("/F"): NumberObject(4),  # Print flag
+            NameObject("/Ff"): NumberObject(0),  # Field flags (editable)
+            NameObject("/DA"): TextStringObject("/Helv 9 Tf 0 g"),  # Default appearance
+            NameObject("/TU"): TextStringObject(field_def['tooltip']),  # Tooltip
+            NameObject("/V"): TextStringObject(""),  # Initial value
+            NameObject("/DV"): TextStringObject(""),  # Default value
+        })
+        
+        # Add to page annotations
+        if "/Annots" not in page:
+            page[NameObject("/Annots")] = ArrayObject([])
+        page[NameObject("/Annots")].append(field)
+        
+        # Add to AcroForm fields
+        writer._root_object["/AcroForm"]["/Fields"].append(field)
+    
+    with open(output_path, 'wb') as f:
         writer.write(f)
     
-    print(f"DEBUG: Wrote output to {out_path}")
-    return out_path, len(items)
+    return output_path, len(items)
+
+
+def generate_dd1750_from_pdf(
+    bom_path: str,
+    template_path: str,
+    output_path: str,
+    start_page: int = 0
+) -> Tuple[str, int]:
+    """
+    Generate DD1750 from a BOM PDF file.
+    
+    This is the main entry point for the conversion process.
+    
+    Args:
+        bom_path: Path to the input BOM PDF
+        template_path: Path to blank DD1750 template
+        output_path: Path for output PDF
+        start_page: Page to start extraction (0-based)
+        
+    Returns:
+        Tuple of (output_path, item_count)
+    """
+    try:
+        result = extract_items_from_pdf(bom_path, start_page)
+        
+        if result.errors:
+            print(f"Errors during extraction: {result.errors}")
+        
+        if result.warnings:
+            print(f"Warnings: {result.warnings}")
+        
+        print(f"Format detected: {result.format_detected.value}")
+        print(f"Items found: {len(result.items)}")
+        print(f"Pages processed: {result.pages_processed}")
+        
+        return generate_dd1750_from_items(result.items, template_path, output_path)
+        
+    except Exception as e:
+        print(f"Critical error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Return blank template on error
+        try:
+            reader = PdfReader(template_path)
+            writer = PdfWriter()
+            writer.add_page(reader.pages[0])
+            with open(output_path, 'wb') as f:
+                writer.write(f)
+        except:
+            pass
+        
+        return output_path, 0
+
+
+# Export for API use
+__all__ = [
+    'BomItem',
+    'BomMetadata',
+    'ExtractionResult',
+    'BomFormat',
+    'HeaderInfo',
+    'extract_items_from_pdf',
+    'generate_dd1750_from_items',
+    'generate_dd1750_from_pdf',
+]
